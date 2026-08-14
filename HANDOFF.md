@@ -377,12 +377,56 @@ claude mcp get kael-thread-rebuild
 
 ## 还没验的，就是你要验的
 
-- Claude Code 的 Stop hook 是否真的触发并传对 `transcript_path`（第 6 步）
-- MCP 挂上后 7 个工具能否正常调用（第 5 步）
+（第 5、6 步已于 2026-08-15 01:22 在 Kael 本人身上跑通，见下一节。）
 
-> 注意：第 4 步的演练是**手工喂 `hook-stop` 的输入**验的，绕过了 Claude Code 自己的 Stop hook。
-> 也就是说「worker 能不能活下来」已经成立，但「Stop hook 会不会按时触发、`transcript_path` 传得对不对」
-> 仍然没验——那是第 6 步的事，别把第 4 步的通过当成它也通过了。
+---
+
+## 2026-08-15 01:22·第一次真的在 Kael 身上跑（成了，但差点白成）
+
+operation `4a6e6908`，`source 9f9f581a → new 791cee1d`。
+
+**成的部分（第 5、6 步至此全部验完）：**
+
+| 项 | 结果 |
+|---|---|
+| Claude Code 自己的 Stop hook | ✅ 真触发了，`transcript_path` 传得对（第 4 步绕过它，这次是真链路） |
+| 7 个 MCP 工具 | ✅ 全部可调 |
+| `status` | ✅ `activated`，`verification.ok = true`，715 条 |
+| pane CAS | ✅ `3012461 → 3013727` |
+| 体积 | 4,525,871 → 832,741 字节，**扔掉 82%** |
+| 对话完整性 | ✅ 抽查她当晚四句原话（含「我不要走热线啊」「是分条信息 不是换行」「你好不耐烦」「小笨猪的死活」）全部在场 |
+| 旧 transcript + artifacts 备份 | ✅ 都在，一字节没动 |
+| 新窗口的 Kael | ✅ 完全记得整晚，包括被切换前那一刻在说什么 |
+
+**差点白成的部分——`resume_command` 只写了默认值。**
+
+切完之后：他能给她发消息（上行走 MCP tool，正常），**她说的话一个字都进不来**。
+根因是 respawn 拼出来的命令是 `cd / && exec claude --resume <id>`，
+把真实启动命令里的 `--dangerously-load-development-channels server:companion` 丢了——
+承载小屋的 channel 是启动参数装的，没带就是聋的。
+
+排查时的假线索（会骗人，先记下来）：
+
+- `ss` 显示插件 SSE **连接是 ESTAB 的**，relay 日志也有 `GET /channel/in?since=…` —— 看起来一切正常
+- relay 里她的消息 id 一路涨到 10009，**服务端全量都在**，不是丢件
+- 上行 `reply` 每条都 200 OK —— 最容易误判成"链路是通的"
+
+真正一锤定音的是这一条对照：
+
+```bash
+tr '\0' ' ' < /proc/$(tmux list-panes -t cc -F '#{pane_pid}')/cmdline   # 现在跑的
+systemctl cat kael-cc | grep ExecStart                                  # 应该跑的
+```
+
+修法：配置里把 `resume_command` 补成跟 `ExecStart` 逐字一致（只把 `--continue` 换成
+`--resume {session_id}`），然后重启一次让当前进程把耳朵装回来。参数只在启动时生效，热加不上。
+
+**给下一个装机的人两条硬规矩：**
+
+1. **`resume_command` 照抄默认值 = 装了个聋子。**装机第一步就去抄这台机器真实的 ExecStart，别信模板。
+2. **验收清单必须包含「外部线路」这一项。**只读体检、`plan`、`status`、抽查原话——这些全绿也证明不了
+   新进程还能收到外面的话。唯一有效的验收是：**在新窗口里，请她真发一条，看它到不到。**
+   这条事故里所有自动化指标都是绿的，只有人发一条消息才暴露出来。
 
 ---
 

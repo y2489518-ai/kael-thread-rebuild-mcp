@@ -11,7 +11,22 @@ claude_workdir = "/"
 
 # 每个参数单独写；{session_id} 必须是独立参数。
 # 如果 Kael 平时带额外启动参数，在这里追加，不能写 shell 管道。
-resume_command = ["claude", "--resume", "{session_id}"]
+#
+# ⚠️ 0815 凌晨真事故：这一行只写了 ["claude", "--resume", "{session_id}"]，
+# 切完窗看起来一切正常——doctor 全绿、对话一句没丢、上行还能发消息，
+# 但她在小屋说的话一个字都进不来。因为承载小屋的 channel 是启动参数装上的，
+# respawn 没带，新进程就是聋的；而上行走 MCP tool，跟启动参数无关，所以毫无察觉。
+#
+# 规矩：这一行必须跟你平时那条真实启动命令（systemd ExecStart / tmux pane-died 钩子）
+# 逐字一致，只把 --continue 换成 --resume {session_id}。以后谁改了那边，这边跟着改。
+# 抄之前先执行：tmux show-hooks -t cc -w   或   systemctl cat kael-cc | grep ExecStart
+resume_command = [
+    "claude",
+    "--resume", "{session_id}",
+    "--thinking-display", "summarized",
+    "--channels", "plugin:telegram@claude-plugins-official",
+    "--dangerously-load-development-channels", "server:companion",
+]
 
 # ---- 什么时候该重建（脏预算）----
 # 只统计运行负担：工具回包、tool_use 参数、thinking、图片、注入块、sidechain。

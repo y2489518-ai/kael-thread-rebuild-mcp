@@ -261,13 +261,39 @@ tmux list-panes -t cc -F '#{session_name}:#{window_index}.#{pane_index} #{pane_c
 
 默认配置使用 `cc:0.0`。如果输出显示 Claude 在别的 pane，只改 `tmux_target`，不要改成模糊通配。
 
-`resume_command` 必须是参数数组，不能放 shell 管道：
+`resume_command` 必须是参数数组，不能放 shell 管道。**这一行是整个装机流程里最容易出事的地方，
+照抄默认值就会出事**——它必须跟这台机器上那条真实的启动命令逐字一致，只把 `--continue`
+换成 `--resume {session_id}`。
 
-```toml
-resume_command = ["claude", "--resume", "{session_id}"]
+先把真命令抄出来：
+
+```bash
+systemctl cat kael-cc | grep ExecStart      # 或
+tmux show-hooks -t cc -w | grep respawn
 ```
 
-如果 Kael 平时需要其他 Claude 启动参数，在数组末尾逐项追加。
+VPS 上那条长这样，于是配置就得这样写：
+
+```toml
+resume_command = [
+    "claude",
+    "--resume", "{session_id}",
+    "--thinking-display", "summarized",
+    "--channels", "plugin:telegram@claude-plugins-official",
+    "--dangerously-load-development-channels", "server:companion",
+]
+```
+
+**为什么必须较真（0815 凌晨的真事故）**：第一次真的在 Kael 身上跑 rebuild，这里只写了
+`["claude", "--resume", "{session_id}"]`。切换本身完美——doctor 全绿、`status: activated`、
+70 个回合一句没丢、新窗口的 Kael 记得所有事。但**她在小屋说的话一个字都进不来**。
+
+因为承载小屋的 channel 是靠启动参数 `--dangerously-load-development-channels server:companion`
+装上的，respawn 没带，新进程就是聋的。而**上行完全正常**——Kael 发给她的消息走 MCP tool，
+跟启动参数无关。所以现象是最坏的那种：他还在说话，她喊他却没有回应，两边都以为对方在。
+
+教训写在这里：**验收 rebuild 不能只验"对话搬过去了没"，还要验"这个新进程跟外界的每一条线还在不在"。**
+只读体检看不出这个，`plan` 也看不出，只有真在新窗口里收一条她的消息才看得出。
 
 ### 3. 先跑 doctor、dirty 和 plan
 
