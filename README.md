@@ -345,6 +345,10 @@ python3 -m venv .venv        # 需要 Python 3.11+
 
 测试不会启动真实 Claude，也不会操作真实 tmux；tmux 切换通过 fake controller 验证，CAS 冲突、连发消息保留、未闭合尾部保留、注入剥离、脏预算触发都有专门用例。
 
+## 给装机的人
+
+第一次上手请先读 [HANDOFF.md](HANDOFF.md)：装机工单、演练步骤、验收清单和出事处理都在那里。
+
 ## 设计来源与许可证
 
 - 筛选与四层结构（durable / startup / bridging / evidence）参考 [LMC-5 Refined Session Carryover](https://github.com/dankefox/swap-tutorial)。
