@@ -269,6 +269,59 @@ def test_missing_tmux_binary_reports_failure_instead_of_raising(configured):
         assert controller.target_alive() is False
 
 
+def test_mismatched_workdir_is_refused_before_anything_is_written(configured, tmp_path):
+    """cwd 和 project_dir 对不上时，切换后 resume 必然找不到 session,
+    而那时 pane 已经被杀。必须在写任何东西之前就拒绝。"""
+    from kael_thread_rebuild.config import RebuildConfig, encode_project_dirname
+
+    assert encode_project_dirname(Path("/root")) == "-root"
+    assert encode_project_dirname(Path("/")) == "-"
+
+    config, project = configured
+    source = project / "old-session.jsonl"
+    write_jsonl(source, [user("问题"), assistant("回答")])
+
+    # project_dir 的目录名跟 claude_workdir 编不出来
+    bad = RebuildConfig.from_mapping(
+        {
+            "project_dir": str(project),
+            "state_dir": str(config.state_dir),
+            "claude_workdir": "/root",
+            "resume_command": ["claude", "--resume", "{session_id}"],
+            "activation_delay_seconds": 1,
+            "stable_file_seconds": 0.01,
+            "stable_file_timeout_seconds": 0.2,
+        }
+    )
+    assert bad.workdir_matches_project() is False
+
+    coordinator = RebuildCoordinator(bad, FakeTmux())
+    assert coordinator.doctor()["workdir_matches_project"] is False
+    assert coordinator.doctor()["expected_project_dirname"] == "-root"
+
+    operation = coordinator.request("mismatch", "REBUILD")
+    with pytest.raises(RebuildError, match="对不上"):
+        coordinator.prepare(operation["operation_id"], source)
+    assert list(project.glob("*.jsonl")) == [source], "拒绝之前不许留下任何候选"
+
+
+def test_matching_workdir_passes_the_check(tmp_path):
+    from kael_thread_rebuild.config import RebuildConfig
+
+    project = tmp_path / "-root"
+    project.mkdir()
+    config = RebuildConfig.from_mapping(
+        {
+            "project_dir": str(project),
+            "state_dir": str(tmp_path / "state"),
+            "claude_workdir": "/root",
+            "resume_command": ["claude", "--resume", "{session_id}"],
+            "activation_delay_seconds": 1,
+        }
+    )
+    assert config.workdir_matches_project() is True
+
+
 def test_dirty_report_is_read_only(configured):
     config, project = configured
     source = project / "old-session.jsonl"

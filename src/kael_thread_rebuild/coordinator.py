@@ -119,8 +119,20 @@ class RebuildCoordinator:
         project_exists = self.config.project_dir.is_dir()
         transcript_count = len(list(self.config.project_dir.glob("*.jsonl"))) if project_exists else 0
         claude_binary = shutil.which(self.config.resume_command[0])
+        workdir_ok = self.config.workdir_matches_project()
         return {
-            "ok": bool(project_exists and transcript_count and self.tmux.available() and self.tmux.target_alive() and claude_binary),
+            "ok": bool(
+                project_exists
+                and transcript_count
+                and self.tmux.available()
+                and self.tmux.target_alive()
+                and claude_binary
+                and (workdir_ok or not self.config.verify_workdir_matches_project)
+            ),
+            "workdir_matches_project": workdir_ok,
+            "claude_workdir": str(self.config.claude_workdir),
+            "expected_project_dirname": self.config.expected_project_dirname,
+            "actual_project_dirname": self.config.project_dir.name,
             "project_dir": str(self.config.project_dir),
             "project_dir_exists": project_exists,
             "transcript_count": transcript_count,
@@ -225,6 +237,14 @@ class RebuildCoordinator:
             self.state.save(operation)
 
         try:
+            if self.config.verify_workdir_matches_project and not self.config.workdir_matches_project():
+                raise RebuildError(
+                    "claude_workdir 与 project_dir 对不上："
+                    f"workdir={self.config.claude_workdir} 应该对应目录 "
+                    f"{self.config.expected_project_dirname}，实际配的是 {self.config.project_dir.name}。"
+                    " 这样切换后 claude --resume 会去别的目录找 session，"
+                    "报 No conversation found，而那时 pane 已经被杀了。"
+                )
             source_digest = self._wait_stable(source)
             source_mtime = source.stat().st_mtime
             pane_pid = self._pane_identity()

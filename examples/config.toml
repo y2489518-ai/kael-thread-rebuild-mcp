@@ -48,3 +48,11 @@ activation_delay_seconds = 3.0
 healthcheck_seconds = 5.0
 stable_file_seconds = 1.0
 stable_file_timeout_seconds = 10.0
+
+# project_dir 的目录名必须是 claude_workdir 编码出来的那个（`/` 换成 `-`）：
+#   claude_workdir = "/root"  ->  project_dir 必须以 "-root" 结尾
+#   claude_workdir = "/"      ->  project_dir 必须以 "-" 结尾
+# 对不上时 prepare 会直接拒绝：切换之后 claude --resume 会去别的目录找 session，
+# 报 No conversation found，而那一刻 pane 已经被杀了。
+# 只有在你确认 Claude Code 换了命名规则时才关掉这个检查。
+verify_workdir_matches_project = true

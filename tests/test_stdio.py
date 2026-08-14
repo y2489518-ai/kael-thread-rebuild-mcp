@@ -18,7 +18,7 @@ def test_real_stdio_handshake_lists_tools(configured, tmp_path: Path):
                 f'project_dir = "{project}"',
                 f'state_dir = "{config.state_dir}"',
                 'tmux_target = "cc:0.0"',
-                f'claude_workdir = "{tmp_path}"',
+                f'claude_workdir = "{config.claude_workdir}"',
                 'resume_command = ["claude", "--resume", "{session_id}"]',
                 "dirty_budget_bytes = 4096",
                 "carry_max_tokens = 0",

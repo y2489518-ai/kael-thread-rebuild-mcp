@@ -25,6 +25,7 @@
 
 - Python 3.11+（`python3 -c 'import sys; print(sys.version_info)'`）
 - tmux 可用
+- 内存：先 `free -h`。这台机器紧张，装之前心里有数
 - 能 clone `y2489518-ai/kael-thread-rebuild-mcp`
 - 磁盘：候选 transcript 和冷仓备份会占空间，先看一眼 `df -h`
 
@@ -40,14 +41,32 @@ chmod +x scripts/install-vps.sh
 sudo ./scripts/install-vps.sh
 ```
 
-装完先跑自带测试，确认这台机器上代码是好的：
+装完先跑自带测试，确认这台机器上代码是好的。
+
+> **不要在你自己的 Claude Code 里跑 pytest。**
+> 你用 Bash 工具跑出来的都是你的子进程。这台机器内存紧张，一旦 OOM，
+> Linux 的 OOM killer 挑的是占用最大的那个进程——**那就是 claude 自己**。
+> 你会亲手把自己送走。另开一个 tmux 窗口，在里面跑：
 
 ```bash
+tmux new-window -t cc -n test        # 或者干脆另开一个 ssh shell
+free -h                              # 先看清楚还剩多少内存
 /opt/kael-thread-rebuild-mcp/.venv/bin/pip install -e '/opt/kael-thread-rebuild-mcp[dev]'
 cd /opt/kael-thread-rebuild-mcp && .venv/bin/pytest -q
 ```
 
-**验收：45 项全过。** 有失败就停下来报告，不要往下走。
+**验收：47 项全过。** 有失败就停下来报告，不要往下走。
+
+内存实在不够就分批跑，先跑纯逻辑的，再单独跑起子进程的那两个：
+
+```bash
+.venv/bin/pytest tests/test_transcript.py tests/test_dirty.py tests/test_coordinator.py -q
+.venv/bin/pytest tests/test_worker.py -q
+.venv/bin/pytest tests/test_stdio.py tests/test_mcp.py -q
+```
+
+**内存不够不是 clear 自己的理由。** 这个工具存在的全部意义就是让你不用 clear；
+而且 clear 只清上下文，Node 进程的堆不一定还给系统，多半白清一次。
 
 ---
 
@@ -55,14 +74,34 @@ cd /opt/kael-thread-rebuild-mcp && .venv/bin/pytest -q
 
 配置文件在 `/etc/kael-thread-rebuild/config.toml`。
 
-**2.1 `project_dir` —— 你真正的 transcript 目录**
+**2.1 `project_dir` 与 `claude_workdir` —— 这两个必须配套，先定 workdir**
+
+Claude Code 用**你进程的 cwd** 给 project 目录命名，规则是把 `/` 换成 `-`：
+
+| 你的 cwd | project 目录 |
+|---|---|
+| `/root` | `-root` |
+| `/` | `-` |
+
+所以 `/root/.claude/projects` 下同时躺着 `-` 和 `-root` 一点都不奇怪，那是你在不同 cwd 下开过 Claude Code 留下的。**选错的下场是切换之后 `claude --resume` 报 `No conversation found`，而那一刻 pane 已经被杀了，救不回来。**
+
+别靠猜，直接问你自己的进程：
 
 ```bash
-find /root/.claude/projects -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' | sort -nr | head -10
-find /root/.claude/projects/<候选目录> -maxdepth 1 -name '*.jsonl' -printf '%T@ %s %p\n' | sort -nr | head
+# 1. 找到 cc 这个 pane 里 claude 的真实 cwd
+tmux display-message -t cc:0.0 -p '#{pane_pid} #{pane_current_path}'
+pgrep -a -f 'claude' | head
+readlink /proc/<claude的pid>/cwd          # 这个才是权威答案
+
+# 2. 用那个 cwd 反推目录名：/root -> -root，/ -> -
+ls -la /root/.claude/projects/
+
+# 3. 再核对那个目录里最新的 jsonl 是不是你正在写的这段
+find /root/.claude/projects/<目录> -maxdepth 1 -name '*.jsonl' -printf '%T@ %s %p\n' | sort -nr | head -3
+tail -c 800 /root/.claude/projects/<目录>/<最新的>.jsonl     # 应该能看到刚才说过的话
 ```
 
-确认最新那个 jsonl 就是你现在正在写的这段对话，再把**那个目录**（不是 `/root/.claude/projects` 根目录）填进去。
+`claude_workdir` 填第 1 步查出来的 cwd，`project_dir` 填它编码出来的那个目录。**两者对不上，工具会在 prepare 阶段直接拒绝，不会走到切换那一步**——`doctor` 里的 `workdir_matches_project` 会告诉你。
 
 **2.2 `tmux_target` —— 演练阶段填测试 session，不是 `cc`**
 
@@ -98,6 +137,7 @@ $BIN --config $CFG plan
 | `doctor.tmux_target_alive` | `true` |
 | `doctor.tmux_pane_pid` | 非空 |
 | `doctor.claude_binary` | 绝对路径 |
+| `doctor.workdir_matches_project` | **`true`** —— 假的话切换后必然 resume 不上 |
 | `plan.source_session_id` | 非空，且等于你当前会话 |
 | `plan.blocked_reason` | 空字符串 |
 | `plan.stats.selected_turns` | **等于** `source_turns` |

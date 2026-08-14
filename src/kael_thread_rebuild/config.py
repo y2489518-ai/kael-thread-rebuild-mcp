@@ -12,6 +12,16 @@ DEFAULT_CONFIG_ENV = "KAEL_REBUILD_CONFIG"
 DEFAULT_DIRTY_BUDGET = 512 * 1024
 
 
+def encode_project_dirname(workdir: Path) -> str:
+    """Claude Code 用 cwd 给 project 目录命名：把 `/` 换成 `-`。
+
+    `/root` -> `-root`，`/` -> `-`。这两个目录很容易同时存在且长得像，
+    选错的下场是 `claude --resume` 报 "No conversation found"——那时 pane
+    已经被杀了，救不回来。
+    """
+    return str(workdir).replace("/", "-")
+
+
 @dataclass(frozen=True)
 class RebuildConfig:
     project_dir: Path
@@ -29,6 +39,9 @@ class RebuildConfig:
     include_open_tail: bool = True
     freeze_startup_snapshot: bool = True
     stamp_turns: bool = True
+    # project_dir 的目录名必须是 claude_workdir 编码出来的那个，否则
+    # resume 会去别的目录找 session，找不到时 pane 已经被杀了。
+    verify_workdir_matches_project: bool = True
     activation_delay_seconds: float = 3.0
     healthcheck_seconds: float = 5.0
     stable_file_seconds: float = 1.0
@@ -64,6 +77,7 @@ class RebuildConfig:
             include_open_tail=bool(raw.get("include_open_tail", True)),
             freeze_startup_snapshot=bool(raw.get("freeze_startup_snapshot", True)),
             stamp_turns=bool(raw.get("stamp_turns", True)),
+            verify_workdir_matches_project=bool(raw.get("verify_workdir_matches_project", True)),
             activation_delay_seconds=float(raw.get("activation_delay_seconds", 3.0)),
             healthcheck_seconds=float(raw.get("healthcheck_seconds", 5.0)),
             stable_file_seconds=float(raw.get("stable_file_seconds", 1.0)),
@@ -87,6 +101,13 @@ class RebuildConfig:
             raise ValueError("max_event_chars must be 0 (no truncation) or at least 500")
         if self.activation_delay_seconds < 1:
             raise ValueError("activation_delay_seconds must be at least 1")
+
+    @property
+    def expected_project_dirname(self) -> str:
+        return encode_project_dirname(self.claude_workdir)
+
+    def workdir_matches_project(self) -> bool:
+        return self.project_dir.name == self.expected_project_dirname
 
     def resume_argv(self, session_id: str) -> list[str]:
         if not session_id or any(char not in "0123456789abcdef-" for char in session_id.lower()):

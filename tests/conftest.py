@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from kael_thread_rebuild.config import RebuildConfig
+from kael_thread_rebuild.config import RebuildConfig, encode_project_dirname
 
 
 def user(text: str, session: str = "old-session", **extra) -> dict:
@@ -65,14 +65,17 @@ def write_jsonl(path: Path, rows: list[dict]) -> None:
 
 @pytest.fixture
 def configured(tmp_path: Path) -> tuple[RebuildConfig, Path]:
-    project = tmp_path / "project"
+    # project 目录名必须是 claude_workdir 编码出来的那个，跟真实环境一致
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+    project = tmp_path / encode_project_dirname(workdir)
     project.mkdir()
     config = RebuildConfig.from_mapping(
         {
             "project_dir": str(project),
             "state_dir": str(tmp_path / "state"),
             "tmux_target": "cc:0.0",
-            "claude_workdir": str(tmp_path),
+            "claude_workdir": str(workdir),
             "resume_command": ["claude", "--resume", "{session_id}"],
             "dirty_budget_bytes": 4096,
             "carry_max_tokens": 0,

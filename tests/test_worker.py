@@ -60,7 +60,7 @@ def test_stop_hook_spawns_a_detached_worker_that_reaches_a_terminal_state(config
     source = project / "old-session.jsonl"
     write_jsonl(source, [user("我们说过的话"), assistant("我记得"), user("还有这句"), assistant("也记得")])
 
-    config_path = write_config(tmp_path / "worker.toml", project, config.state_dir, tmp_path)
+    config_path = write_config(tmp_path / "worker.toml", project, config.state_dir, config.claude_workdir)
     coordinator = RebuildCoordinator(config)
     operation = coordinator.request("worker link test", "REBUILD")
 
@@ -87,7 +87,7 @@ def test_worker_rollback_branch_does_not_need_a_transcript(configured, tmp_path)
     config, project = configured
     source = project / "old-session.jsonl"
     write_jsonl(source, [user("问题"), assistant("回答")])
-    config_path = write_config(tmp_path / "worker.toml", project, config.state_dir, tmp_path)
+    config_path = write_config(tmp_path / "worker.toml", project, config.state_dir, config.claude_workdir)
 
     coordinator = RebuildCoordinator(config)
     operation = coordinator.request("rollback branch", "REBUILD")
@@ -108,7 +108,7 @@ def test_worker_refuses_a_pending_rebuild_without_transcript(configured, tmp_pat
     from kael_thread_rebuild import worker
 
     config, project = configured
-    config_path = write_config(tmp_path / "worker.toml", project, config.state_dir, tmp_path)
+    config_path = write_config(tmp_path / "worker.toml", project, config.state_dir, config.claude_workdir)
     coordinator = RebuildCoordinator(config)
     operation = coordinator.request("no transcript", "REBUILD")
 
@@ -122,7 +122,7 @@ def test_cli_read_only_commands_emit_json(configured, tmp_path):
     config, project = configured
     source = project / "old-session.jsonl"
     write_jsonl(source, [user("你好"), assistant("在")])
-    config_path = write_config(tmp_path / "cli.toml", project, config.state_dir, tmp_path)
+    config_path = write_config(tmp_path / "cli.toml", project, config.state_dir, config.claude_workdir)
 
     def run(command: str) -> dict:
         result = subprocess.run(
@@ -151,7 +151,7 @@ def test_cli_read_only_commands_emit_json(configured, tmp_path):
 def test_cli_rejects_a_wrong_confirmation_word(configured, tmp_path):
     config, project = configured
     write_jsonl(project / "old-session.jsonl", [user("你好"), assistant("在")])
-    config_path = write_config(tmp_path / "cli.toml", project, config.state_dir, tmp_path)
+    config_path = write_config(tmp_path / "cli.toml", project, config.state_dir, config.claude_workdir)
 
     result = subprocess.run(
         [
