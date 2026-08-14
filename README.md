@@ -258,6 +258,29 @@ claude mcp get kael-thread-rebuild
 
 用 Claude Code 的 `/hooks` 只读菜单确认 Stop hook 来源和命令。Hook 从 stdin 接收官方字段 `session_id`、`transcript_path`、`cwd`；本项目不会靠"最新文件"猜真正要切换的活动 transcript。
 
+## 已经实测过什么（2026-08-14）
+
+在一份 10.9 MB 的真实 Claude Code transcript 上跑过隔离验收，结论如下，装机前不必重复怀疑这几条：
+
+- **`claude --resume` 接受重建出来的 transcript。** 152 个 item 的候选文件放进隔离 project 目录后，Claude Code 2.1.199 正常加载。
+- **连续同角色消息不会触发 API 的角色交替错误。** 剥掉工具调用后候选里出现大量相邻 assistant 项（119 assistant / 33 user），实测 resume 正常。
+- **内容确实进了上下文。** 抽查首、中、尾三处细节：开场第一句、对话中段的具体数字、结尾的清理结果，新 session 都能正确回忆。
+- **该扔的确实扔了。** 原始文件里 user/assistant 文本共 103 万字符，其中 97 万是 `isMeta` 的 skill 正文注入；候选只带走 4.8 万字符的真实对话（含一条上一段留下的 compact 摘要）。逐关键词比对没有真实对话丢失。
+- **被剥离的一类值得知道：** `<task-notification>` 包裹的子代理报告不会进新 thread，它属于工具结果性质。要点若重要，应由 assistant 回复自己吸收。
+
+同一份文件上，各分类的运行负担实测：
+
+```text
+tool_result     7,895,943
+meta_injection  1,010,137     # skill 正文，单条能到 80 万字符
+tool_use          223,284
+system            163,324
+injected_block     13,169
+thinking            1,942
+--------------------------------
+对话本体           87,129     # 噪音占比 99.07%
+```
+
 ## 第一次验收：只在人工看守下做
 
 1. 备份整个 Claude 项目目录。

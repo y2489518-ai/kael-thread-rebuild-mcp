@@ -75,6 +75,12 @@ def measure(rows: Sequence[dict[str, Any]]) -> DirtyLedger:
             ledger.add("sidechain", _blob(content))
             continue
 
+        if row.get("isMeta") is True:
+            # skill 正文、slash 命令回显这类 meta 注入。它们不带标签，
+            # 却能一条顶 80 万字符，漏算会让脏预算严重低估。
+            ledger.add("meta_injection", _blob(content))
+            continue
+
         if kind == "user":
             if isinstance(content, list):
                 for item in content:

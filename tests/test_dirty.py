@@ -29,6 +29,19 @@ def test_injected_blocks_count_as_runtime_load_not_as_her_words():
     assert ledger.conversation_bytes == len("真话回答".encode("utf-8"))
 
 
+def test_meta_skill_injection_counts_as_runtime_load():
+    """skill 正文能一条顶几十万字符，漏算会让脏预算严重低估。"""
+    rows = [
+        user("Base directory for this skill: /tmp/x\n" + "指令正文" * 5000, isMeta=True),
+        user("真话"),
+        assistant("回答"),
+    ]
+    ledger = measure(rows)
+    assert ledger.categories.get("meta_injection", 0) > 50_000
+    assert ledger.conversation_bytes == len("真话回答".encode("utf-8"))
+    assert ledger.conversation_turns == 1
+
+
 def test_budget_triggers_rebuild():
     clean = evaluate([user("你好"), assistant("在")], dirty_budget_bytes=4096)
     assert clean["should_rebuild"] is False

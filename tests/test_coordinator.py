@@ -137,6 +137,45 @@ def test_pane_change_blocks_activation_cas(configured):
     assert stored["session_conflict"] is True
 
 
+def test_own_candidate_is_never_mistaken_for_a_third_party(configured):
+    """候选文件天生比 source 新，不排除的话每次续窗都会自判冲突，永远激活不了。"""
+    config, project = configured
+    source = project / "old-session.jsonl"
+    write_jsonl(source, [user("问题"), assistant("回答")])
+    # 让 source 看起来是好几秒前写完的，复现真实 Stop hook 的时序
+    stale = time.time() - 30
+    os.utime(source, (stale, stale))
+
+    tmux = FakeTmux()
+    coordinator = RebuildCoordinator(config, tmux)
+    operation = coordinator.request("test", "REBUILD")
+    prepared = coordinator.prepare(operation["operation_id"], source)
+    assert Path(prepared["candidate_path"]).stat().st_mtime > stale + 1.0
+
+    activated = coordinator.activate(operation["operation_id"])
+    assert activated["status"] == "activated"
+    assert tmux.sessions == [prepared["new_session_id"]]
+
+
+def test_orphan_candidate_is_removed_and_never_looks_like_the_latest_session(configured):
+    config, project = configured
+    source = project / "old-session.jsonl"
+    write_jsonl(source, [user("问题"), assistant("回答")])
+    tmux = FakeTmux()
+    coordinator = RebuildCoordinator(config, tmux)
+    operation = coordinator.request("test", "REBUILD")
+    prepared = coordinator.prepare(operation["operation_id"], source)
+    candidate = Path(prepared["candidate_path"])
+    assert candidate.exists()
+
+    tmux.pid = "9999"
+    with pytest.raises(RebuildError, match="session conflict"):
+        coordinator.activate(operation["operation_id"])
+
+    assert not candidate.exists(), "从未切换过的候选必须清掉，不能留成垃圾"
+    assert coordinator.latest_transcript().resolve() == source.resolve()
+
+
 def test_third_party_transcript_blocks_activation(configured):
     """期间冒出另一段活跃 transcript,也算第三方改过 session。"""
     config, project = configured
@@ -154,7 +193,8 @@ def test_third_party_transcript_blocks_activation(configured):
     with pytest.raises(RebuildError, match="another transcript became active"):
         coordinator.activate(operation["operation_id"])
     assert coordinator.status(operation["operation_id"])["operation"]["session_conflict"] is True
-    assert Path(prepared["candidate_path"]).exists()
+    assert not Path(prepared["candidate_path"]).exists()
+    assert source.exists(), "旧 transcript 永远不动"
 
 
 def test_failed_new_session_rolls_back_old(configured):
@@ -190,6 +230,43 @@ def test_rollback_refuses_when_pane_changed(configured):
     with pytest.raises(RebuildError, match="session conflict"):
         coordinator.perform_rollback(operation["operation_id"])
     assert tmux.sessions == [coordinator.status(operation["operation_id"])["operation"]["new_session_id"]]
+
+
+def test_tmux_explosion_still_lands_in_a_terminal_state(configured):
+    """tmux 抛异常时不能把 operation 卡在 activating，否则之后每次 request 都被挡死。"""
+    config, project = configured
+    source = project / "old-session.jsonl"
+    write_jsonl(source, [user("问题"), assistant("回答")])
+
+    class ExplodingTmux(FakeTmux):
+        def respawn(self, session_id):
+            raise FileNotFoundError("tmux")
+
+    coordinator = RebuildCoordinator(config, ExplodingTmux())
+    operation = coordinator.request("test", "REBUILD")
+    coordinator.prepare(operation["operation_id"], source)
+    with pytest.raises(RebuildError, match="tmux activation raised"):
+        coordinator.activate(operation["operation_id"])
+
+    stored = coordinator.status(operation["operation_id"])["operation"]
+    assert stored["status"] == "failed"
+    assert stored["rollback_ok"] is False
+    # 终态之后必须还能重新登记，不需要人工去删状态文件
+    fresh = coordinator.request("retry", "REBUILD")
+    assert fresh["operation_id"] != operation["operation_id"]
+
+
+def test_missing_tmux_binary_reports_failure_instead_of_raising(configured):
+    from kael_thread_rebuild.tmux import TmuxController
+
+    config, _ = configured
+    controller = TmuxController(config)
+    with mock.patch("kael_thread_rebuild.tmux.subprocess.run", side_effect=FileNotFoundError("tmux")):
+        result = controller.respawn("11111111-1111-1111-1111-111111111111")
+        assert result.ok is False
+        assert "not found" in result.stderr
+        assert controller.pane_pid() == ""
+        assert controller.target_alive() is False
 
 
 def test_dirty_report_is_read_only(configured):

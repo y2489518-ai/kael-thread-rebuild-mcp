@@ -46,8 +46,32 @@ class RebuildCoordinator:
             raise RebuildError("transcript must be an existing .jsonl file")
         return value
 
+    def _known_candidates(self, *, only_unactivated: bool = True) -> set[Path]:
+        """本工具自己造出来的候选文件。
+
+        它们躺在 project_dir 里，mtime 永远是最新的，如果不认出来会被当成
+        "最新的真实会话"，也会被 CAS 当成"第三方开的新 session"。
+        """
+        found: set[Path] = set()
+        for operation in self.state.all():
+            path = operation.get("candidate_path")
+            if not path:
+                continue
+            if only_unactivated and operation.get("status") == "activated":
+                continue
+            try:
+                found.add(Path(str(path)).resolve())
+            except (OSError, ValueError):
+                continue
+        return found
+
     def latest_transcript(self) -> Path:
-        candidates = [path for path in self.config.project_dir.glob("*.jsonl") if path.is_file()]
+        orphans = self._known_candidates()
+        candidates = [
+            path
+            for path in self.config.project_dir.glob("*.jsonl")
+            if path.is_file() and path.resolve() not in orphans
+        ]
         if not candidates:
             raise RebuildError(f"no transcript found under {self.config.project_dir}")
         return max(candidates, key=lambda path: path.stat().st_mtime)
@@ -68,15 +92,19 @@ class RebuildCoordinator:
         except AttributeError:
             return ""
 
-    def _newer_transcripts(self, source: Path, since_mtime: float) -> list[str]:
+    def _newer_transcripts(self, source: Path, since_mtime: float, *, ignore: set[Path] | None = None) -> list[str]:
         """找出比冻结时刻更新的其他 transcript。
 
         有别的 jsonl 在动，说明这个 pane 后来开了另一段 session；
         这时激活会盖掉第三方，必须停手。
+
+        自己刚写出来的候选文件必须排除：它天然比 source 新几秒，不排除的话
+        每一次续窗都会把自己判成"第三方冲突"，永远激活不了。
         """
+        skip = {source.resolve()} | (ignore or set())
         found: list[str] = []
         for path in self.config.project_dir.glob("*.jsonl"):
-            if not path.is_file() or path.resolve() == source.resolve():
+            if not path.is_file() or path.resolve() in skip:
                 continue
             try:
                 if path.stat().st_mtime > since_mtime + 1.0:
@@ -219,6 +247,12 @@ class RebuildCoordinator:
             if candidate.exists():
                 raise RebuildError("candidate transcript already exists")
 
+            # 先把候选路径落进耐久状态，之后任何一步失败都能把垃圾清干净。
+            with self.state.lock():
+                operation = self.state.load(operation_id)
+                operation["candidate_path"] = str(candidate)
+                self.state.save(operation)
+
             operation_dir = self.config.state_dir / "artifacts" / operation_id
             operation_dir.mkdir(parents=True, exist_ok=False, mode=0o700)
             backup = operation_dir / source.name
@@ -268,8 +302,29 @@ class RebuildCoordinator:
                 operation = self.state.load(operation_id)
                 operation["status"] = "failed"
                 operation["error"] = str(exc)
+                self._discard_candidate(operation)
                 self.state.save(operation)
             raise
+
+    def _discard_candidate(self, operation: dict[str, Any]) -> None:
+        """扔掉一个从未被切换过的候选文件。
+
+        它的完整来源已经在 artifacts 冷仓里，留在 project_dir 只会变成垃圾。
+        已经 respawn 过的候选不删，那是现场证据。
+        """
+        path = operation.get("candidate_path")
+        if not path:
+            return
+        try:
+            target = Path(str(path)).resolve()
+            target.relative_to(self.config.project_dir)
+        except (OSError, ValueError):
+            return
+        try:
+            target.unlink(missing_ok=True)
+            operation["candidate_discarded"] = True
+        except OSError:
+            pass
 
     def _assert_cas(self, operation: dict[str, Any]) -> None:
         """切换前核对身份：这个 pane 还是我准备时的那个 pane 吗。
@@ -285,7 +340,8 @@ class RebuildCoordinator:
         source_path = operation.get("source_path")
         source_mtime = operation.get("source_mtime")
         if source_path and isinstance(source_mtime, (int, float)):
-            newer = self._newer_transcripts(Path(source_path), float(source_mtime))
+            own = {Path(str(operation["candidate_path"])).resolve()} if operation.get("candidate_path") else set()
+            newer = self._newer_transcripts(Path(source_path), float(source_mtime), ignore=own)
             if newer:
                 raise RebuildError(
                     "session conflict: another transcript became active after prepare: " + ", ".join(newer)
@@ -300,6 +356,7 @@ class RebuildCoordinator:
             if file_digest(source) != operation["source_sha256"]:
                 operation["status"] = "failed"
                 operation["error"] = "source transcript changed after prepare; refusing activation"
+                self._discard_candidate(operation)
                 self.state.save(operation)
                 raise RebuildError(operation["error"])
             candidate = self._assert_transcript(operation["candidate_path"])
@@ -311,22 +368,34 @@ class RebuildCoordinator:
                 operation["status"] = "failed"
                 operation["error"] = str(exc)
                 operation["session_conflict"] = True
+                self._discard_candidate(operation)
                 self.state.save(operation)
                 raise
             operation["status"] = "activating"
             self.state.save(operation)
 
-        result = self.tmux.respawn(operation["new_session_id"])
-        if not result.ok or not self.tmux.wait_healthy():
-            rollback = self.tmux.respawn(operation["source_session_id"])
-            rollback_healthy = rollback.ok and self.tmux.wait_healthy()
+        # 这一段无论怎么炸，operation 都必须落进终态。
+        # 卡在 activating 会让之后每一次 request 都被"已在进行中"挡死。
+        try:
+            result = self.tmux.respawn(operation["new_session_id"])
+            switched = result.ok and self.tmux.wait_healthy()
+            failure = "" if switched else (result.stderr or "new session failed tmux health check")
+        except Exception as exc:  # noqa: BLE001 - 终态优先于精确分类
+            switched, failure = False, f"tmux activation raised: {exc}"
+
+        if not switched:
+            try:
+                rollback = self.tmux.respawn(operation["source_session_id"])
+                rollback_healthy = rollback.ok and self.tmux.wait_healthy()
+            except Exception:  # noqa: BLE001
+                rollback_healthy = False
             with self.state.lock():
                 operation = self.state.load(operation_id)
                 operation["status"] = "rolled_back" if rollback_healthy else "failed"
-                operation["error"] = result.stderr or "new session failed tmux health check"
+                operation["error"] = failure
                 operation["rollback_ok"] = rollback_healthy
                 self.state.save(operation)
-            raise RebuildError(operation["error"])
+            raise RebuildError(failure)
 
         with self.state.lock():
             operation = self.state.load(operation_id)
@@ -364,15 +433,19 @@ class RebuildCoordinator:
                 operation["session_conflict"] = True
                 self.state.save(operation)
                 raise RebuildError(operation["error"])
-        result = self.tmux.respawn(operation["source_session_id"])
-        healthy = result.ok and self.tmux.wait_healthy()
+        try:
+            result = self.tmux.respawn(operation["source_session_id"])
+            healthy = result.ok and self.tmux.wait_healthy()
+            failure = "" if healthy else (result.stderr or "rollback session failed tmux health check")
+        except Exception as exc:  # noqa: BLE001 - 终态优先于精确分类
+            healthy, failure = False, f"tmux rollback raised: {exc}"
         with self.state.lock():
             operation = self.state.load(operation_id)
             operation["status"] = "rolled_back" if healthy else "failed"
             operation["rollback_ok"] = healthy
             operation["rollback_at"] = utc_now()
             if not healthy:
-                operation["error"] = result.stderr or "rollback session failed tmux health check"
+                operation["error"] = failure
             self.state.save(operation)
             return operation
 
