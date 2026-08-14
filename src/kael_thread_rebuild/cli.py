@@ -20,6 +20,8 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--config", type=Path, default=os.environ.get(DEFAULT_CONFIG_ENV, "config.toml"))
     commands = result.add_subparsers(dest="command", required=True)
     commands.add_parser("doctor")
+    dirty = commands.add_parser("dirty")
+    dirty.add_argument("--transcript", type=Path)
     plan = commands.add_parser("plan")
     plan.add_argument("--transcript", type=Path)
     request = commands.add_parser("request")
@@ -50,6 +52,8 @@ def main() -> int:
     try:
         if args.command == "doctor":
             emit(coordinator.doctor())
+        elif args.command == "dirty":
+            emit(coordinator.dirty(args.transcript))
         elif args.command == "plan":
             emit(coordinator.plan(args.transcript))
         elif args.command == "request":

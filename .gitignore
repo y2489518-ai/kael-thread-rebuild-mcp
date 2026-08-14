@@ -7,5 +7,6 @@ dist/
 build/
 .coverage
 htmlcov/
-config.toml
+# 只忽略仓库根目录下的本机配置，不要连 examples/config.toml 一起吃掉
+/config.toml
 

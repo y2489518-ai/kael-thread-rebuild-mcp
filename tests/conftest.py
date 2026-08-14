@@ -14,6 +14,7 @@ def user(text: str, session: str = "old-session", **extra) -> dict:
         "sessionId": session,
         "uuid": extra.pop("uuid", f"u-{abs(hash(text))}"),
         "parentUuid": None,
+        "timestamp": extra.pop("timestamp", "2026-08-14T10:00:00Z"),
         "message": {"role": "user", "content": text},
         **extra,
     }
@@ -25,8 +26,36 @@ def assistant(text: str, session: str = "old-session", **extra) -> dict:
         "sessionId": session,
         "uuid": extra.pop("uuid", f"a-{abs(hash(text))}"),
         "parentUuid": None,
+        "timestamp": extra.pop("timestamp", "2026-08-14T10:00:01Z"),
         "message": {"role": "assistant", "content": [{"type": "text", "text": text}]},
         **extra,
+    }
+
+
+def tool_call(name: str, payload: str, session: str = "old-session") -> dict:
+    return {
+        "type": "assistant",
+        "sessionId": session,
+        "uuid": f"tc-{abs(hash(payload))}",
+        "message": {"role": "assistant", "content": [{"type": "tool_use", "name": name, "input": {"cmd": payload}}]},
+    }
+
+
+def tool_result(payload: str, session: str = "old-session") -> dict:
+    return {
+        "type": "user",
+        "sessionId": session,
+        "uuid": f"tr-{abs(hash(payload))}",
+        "message": {"role": "user", "content": [{"type": "tool_result", "content": payload}]},
+    }
+
+
+def thinking(payload: str, session: str = "old-session") -> dict:
+    return {
+        "type": "assistant",
+        "sessionId": session,
+        "uuid": f"th-{abs(hash(payload))}",
+        "message": {"role": "assistant", "content": [{"type": "thinking", "thinking": payload}]},
     }
 
 
@@ -45,9 +74,9 @@ def configured(tmp_path: Path) -> tuple[RebuildConfig, Path]:
             "tmux_target": "cc:0.0",
             "claude_workdir": str(tmp_path),
             "resume_command": ["claude", "--resume", "{session_id}"],
-            "target_tokens": 5000,
-            "tail_turns": 2,
-            "max_event_chars": 1000,
+            "dirty_budget_bytes": 4096,
+            "carry_max_tokens": 0,
+            "max_event_chars": 0,
             "activation_delay_seconds": 1,
             "healthcheck_seconds": 1,
             "stable_file_seconds": 0.01,
@@ -55,4 +84,3 @@ def configured(tmp_path: Path) -> tuple[RebuildConfig, Path]:
         }
     )
     return config, project
-

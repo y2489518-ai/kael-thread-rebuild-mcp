@@ -36,15 +36,28 @@ class TmuxController:
         )
         return result.returncode == 0 and result.stdout.strip() == "0"
 
-    def pane_command(self) -> str:
+    def _display(self, spec: str) -> str:
+        if not self.available():
+            return ""
         result = subprocess.run(
-            ["tmux", "display-message", "-p", "-t", self.config.tmux_target, "#{pane_current_command}"],
+            ["tmux", "display-message", "-p", "-t", self.config.tmux_target, spec],
             capture_output=True,
             text=True,
             timeout=3,
             check=False,
         )
         return result.stdout.strip() if result.returncode == 0 else ""
+
+    def pane_command(self) -> str:
+        return self._display("#{pane_current_command}")
+
+    def pane_pid(self) -> str:
+        """pane 里当前 shell 的 pid。
+
+        这是 tmux 环境下的 session 身份凭据：prepare 时记下，激活前再核一次。
+        对不上就说明这个 pane 已经被别人换过，绝不覆盖。
+        """
+        return self._display("#{pane_pid}")
 
     def _shell_command(self, session_id: str) -> str:
         cwd = shlex.quote(str(self.config.claude_workdir))

@@ -19,8 +19,8 @@ def test_real_stdio_handshake_lists_tools(configured, tmp_path: Path):
                 'tmux_target = "cc:0.0"',
                 f'claude_workdir = "{tmp_path}"',
                 'resume_command = ["claude", "--resume", "{session_id}"]',
-                "target_tokens = 5000",
-                "tail_turns = 2",
+                "dirty_budget_bytes = 4096",
+                "carry_max_tokens = 0",
                 "activation_delay_seconds = 1",
             ]
         )
@@ -41,6 +41,7 @@ def test_real_stdio_handshake_lists_tools(configured, tmp_path: Path):
 
     assert asyncio.run(exercise()) == {
         "thread_rebuild_doctor",
+        "thread_rebuild_dirty",
         "thread_rebuild_plan",
         "thread_rebuild_request",
         "thread_rebuild_status",

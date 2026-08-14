@@ -11,6 +11,7 @@ def test_mcp_exposes_only_expected_tools(configured):
     tools = asyncio.run(server.list_tools())
     assert {tool.name for tool in tools} == {
         "thread_rebuild_doctor",
+        "thread_rebuild_dirty",
         "thread_rebuild_plan",
         "thread_rebuild_request",
         "thread_rebuild_status",

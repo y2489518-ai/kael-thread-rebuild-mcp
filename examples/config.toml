@@ -1,0 +1,50 @@
+# 必填：Kael 当前 Claude Code 项目的 transcript 目录。
+# 先在 VPS 执行：find /root/.claude/projects -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' | sort -nr | head
+project_dir = "/root/.claude/projects/-root"
+
+# 所有 operation、备份、manifest 和 worker 日志只存在这里。
+state_dir = "/root/.local/state/kael-thread-rebuild"
+
+# 用户确认 Kael 的 tmux session 是 cc；明确到 pane，避免误杀其他 pane。
+tmux_target = "cc:0.0"
+claude_workdir = "/root"
+
+# 每个参数单独写；{session_id} 必须是独立参数。
+# 如果 Kael 平时带额外启动参数，在这里追加，不能写 shell 管道。
+resume_command = ["claude", "--resume", "{session_id}"]
+
+# ---- 什么时候该重建（脏预算）----
+# 只统计运行负担：工具回包、tool_use 参数、thinking、图片、注入块、sidechain。
+# 真实对话一个字节都不计进来，所以这个阈值不会因为"聊得多"而被撑爆。
+# 512 KiB 是参考值；实测一段跑满的工程会话里运行痕迹能占到 98%，对话本体只占 1~2%。
+dirty_budget_bytes = 524288
+
+# 模型看过原图之后尽快重建，把图片从长期 thread 里移走。
+rebuild_on_original_image_view = true
+
+# ---- 带走什么 ----
+# 闭合的真实对话默认全部带走，不按"重要不重要"打分。
+# carry_max_tokens 只是防炸的硬上限，0 = 不限；真要超了就从最老的整轮开始丢，
+# 并在 stats.dropped_oldest_turns 里如实计数，绝不静默截断。
+carry_max_tokens = 0
+
+# 单条消息截断上限，0 = 不截断。
+max_event_chars = 0
+
+# 末尾"她说了但还没被回复"的那些消息也带走。
+# 关掉它等于把最该接住的时刻先扔了，除非你明确知道自己在干什么，否则别关。
+include_open_tail = true
+
+# 冻结当时真正用过的启动上下文（CLAUDE.md、记忆索引等注入块），
+# 不用今天的文件重新生成一个从未真实存在过的"过去"。
+freeze_startup_snapshot = true
+
+# 每个回合首条人类消息前加 [发生时间: ...]，让新窗口能看出时间线。
+stamp_turns = true
+
+# ---- 切换时序 ----
+# Stop hook 返回后再由脱离当前 pane 的 worker 执行。
+activation_delay_seconds = 3.0
+healthcheck_seconds = 5.0
+stable_file_seconds = 1.0
+stable_file_timeout_seconds = 10.0

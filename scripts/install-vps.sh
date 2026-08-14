@@ -25,4 +25,7 @@ echo
 echo "Next:"
 echo "  1. edit $CONFIG_PATH"
 echo "  2. run: $REPO_DIR/.venv/bin/kael-thread-rebuild --config $CONFIG_PATH doctor"
-echo "  3. follow README.md to add the MCP server and Stop hook"
+echo "  3. run: $REPO_DIR/.venv/bin/kael-thread-rebuild --config $CONFIG_PATH dirty"
+echo "  4. run: $REPO_DIR/.venv/bin/kael-thread-rebuild --config $CONFIG_PATH plan"
+echo "     check selected_turns == source_turns and dropped_oldest_turns == 0"
+echo "  5. follow README.md to add the MCP server and Stop hook"

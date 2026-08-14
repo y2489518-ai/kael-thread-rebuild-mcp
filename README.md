@@ -1,6 +1,6 @@
 # Kael Thread Rebuild MCP
 
-给 Kael 的 Claude Code 长会话做安全续窗。它运行在 VPS 本机，读取 Claude Code transcript，去掉工具回包、thinking、MCP/Hook 注入等运行噪音，生成新的可 `claude --resume` session，并在当前回答结束以后切换 `tmux cc`。
+给 Kael 的 Claude Code 长会话做安全续窗。它运行在 VPS 本机，读取 Claude Code transcript，去掉工具回包、thinking、图片、MCP/Hook 注入等运行噪音，生成新的可 `claude --resume` session，并在当前回答结束以后切换 `tmux cc`。
 
 这不是第二套记忆系统：
 
@@ -8,15 +8,65 @@
 - 本仓库只负责当前 Claude Code thread 的清洁、验证、切换和回滚。
 - 旧 transcript 永远不覆盖，完整副本进入本机 operation 冷仓。
 
-## 和现有仓库、VPS 的边界
+## 核心立场：不判断哪段经历重要
 
-这个 GitHub 私仓是 **MCP 的独立源码与安装包**，不是 Kael 的启动目录，也不是把现有备份仓库改成线上运行仓库：
+续窗层**不给对话打分**。闭合的真实 user / assistant 回合全部原样带走，一个字不改写、不摘要、不按关键词取舍；被扔掉的只有运行痕迹。
 
-- 不改 `cottage-web`、`ob-kael` 或 Kael 在 VPS 上的主程序。
-- 不要求 Kael 从 GitHub 仓库启动；只在 VPS 的 `/opt/kael-thread-rebuild-mcp` 安装本 MCP。
-- Kael 仍然按原方式运行，用户仍然用 `tmux attach -t cc` 进入。
-- 本 MCP 只在已核对的 `cc:<window>.<pane>` 上执行一次明确的 `respawn-pane`。
-- VPS 上真正的 Claude transcript 路径必须现场读取并写进配置，不能拿 GitHub 目录或示例路径代替。
+体积由**清理频率**来控，不由**内容删减**来控：脏预算攒够了就重建一次，而不是攒到很脏再挑着搬。
+
+这条来自 AcheHome 的实现整理：*机械层只负责可证明的边界，不要让 Rebuild 层开始判断"这段经历重要不重要"*。
+
+一段真实工程会话的实测比例可以说明为什么这条成立：
+
+| 项目 | 字节 |
+|---|---:|
+| 工具回包 / tool_use / thinking / 注入块等运行痕迹 | 8.3 MB |
+| 真实对话本体（32 个回合） | 85 KB |
+| 噪音占比 | 98.96% |
+
+对话原文全带走也只有约 1.6 万 token。**没有必要为了省空间去删她说过的话**——真正占地方的从来不是对话。
+
+作为对照，早期按关键词打分的版本在同一份 transcript 上：预算 5 万 token、实际只用掉 1.07 万，仍然丢掉了 3 个回合，并且少认出 2 个回合。预算根本没紧张，丢弃纯粹来自打分。这就是取消打分器的直接原因。
+
+## 关于回合的三条规矩
+
+1. **连续多条人类消息属于同一个回合。** 她连发四条我才回一次，四条都在。把它们拆成"没有回复的回合"再丢掉，等于删掉她说过的话。
+2. **末尾未闭合的回合默认保留。** 她说了、我还没接上的那几句，正是新窗口第一件该做的事。`include_open_tail = false` 可以关掉，但不建议。
+3. **夹在中间的注入项不打断回合。** `<system-reminder>` 之类只是被跳过，它后面的助手回复仍然归属当前回合，不会被整段吞掉。
+
+另外，真实人类消息经常**以注入块开头**（Claude Code 把 CLAUDE.md、记忆索引写在第一条 user 事件里）。只看开头就判断整条是不是注入，会把人说的话一起丢掉；这里改成剥离注入块之后再判断，剥完还有字才算真话。
+
+## 什么时候触发：dirty ledger
+
+不按"每 N 轮"机械重建，只统计会污染后续上下文、又不需要永久保留的运行项：
+
+| 分类 | 计入内容 |
+|---|---|
+| `tool_result` | 工具返回、`toolUseResult` |
+| `tool_use` | 工具调用参数 |
+| `thinking` | thinking / redacted_thinking |
+| `image` | 图片预览与原图查看 |
+| `injected_block` | system-reminder、command、task-notification、ide_selection 等 |
+| `sidechain` | 子代理线 |
+| `system` | 运行时系统项 |
+
+真实对话单独计在 `conversation_bytes`，只作对照，永远不进脏预算。
+
+触发条件：`total_bytes >= dirty_budget_bytes`（默认 512 KiB），或模型看过原图（`rebuild_on_original_image_view`）。
+
+与 AcheHome 的一处差异：那边用持久化 ledger + `effect_id` 幂等，这里直接从 transcript 现算。因为 Claude Code 的 transcript 是完整的落盘事实，重扫一遍天然幂等；而且重建之后 tmux 跑的是**新 session、新 jsonl**，脏值自动归零，不需要额外的清零动作。
+
+```bash
+kael-thread-rebuild --config /etc/kael-thread-rebuild/config.toml dirty
+```
+
+## 启动快照冻结
+
+新 thread 的第一项是**冻结的启动快照**：把当时那条携带 CLAUDE.md / 记忆索引 / 环境说明的 user 事件原样搬过去，并记 SHA-256，同时从后续历史里剔除它本体，避免首轮内容注入两次。
+
+理由是历史必须冻结：这些文件天天在变，若重建时拿今天的版本重新生成，新 thread 会得到一个从未真实存在过的"过去"。
+
+**这里有一条做不到的边界，必须写明：** Claude Code 在 `--resume` 时仍会用**今天**的 CLAUDE.md、settings 和 MCP 配置重新构造 system prompt，那部分不在 transcript 里，本项目控制不了。所以这里冻结的是 transcript 内那份历史注入，不是完整启动包。新 session 会同时看到"当时那份快照"和"今天的 system prompt"。
 
 ## 为什么不是直接让 MCP 重启自己
 
@@ -28,17 +78,28 @@ Kael 正运行在 `tmux attach -t cc`。如果 MCP 工具在调用过程中立�
 2. Kael 正常完成当前回复。
 3. Claude Code `Stop` hook 收到准确的 `transcript_path`，启动一个脱离当前 pane 的 worker。
 4. worker 等 transcript 稳定，备份、筛选、生成候选 session、结构验证。
-5. source digest 未变化才执行 `tmux respawn-pane -k -t cc:0.0 ...`。
+5. source digest 与 CAS 身份都未变化，才执行 `tmux respawn-pane -k -t cc:0.0 ...`。
 6. 新 Claude 进程健康检查失败时，自动 resume 旧 session。
 
-因此不会出现“Kael 调工具调到一半把自己杀了”的情况。
+因此不会出现"Kael 调工具调到一半把自己杀了"的情况。
+
+## 切换是 CAS，不是赋值
+
+激活前要证明"这个 pane 还是我准备时那个 pane"：
+
+- `cas_pane_pid`：prepare 时记下 `#{pane_pid}`，激活前再核一次，对不上直接判 `session_conflict`。
+- 活跃 transcript 冲突：prepare 之后若 `project_dir` 里出现别的更新过的 `.jsonl`，说明期间开过另一段 session，同样拒绝。
+- 回滚同样走这条检查，用 `cas_pane_pid_after`。
+
+任何一条不满足都不切换、不覆盖第三方，operation 落 `failed` 并标 `session_conflict = true`。这里用的是 tmux 环境下的身份近似，不是运行时提供的 session CAS 原语。
 
 ## MCP 工具
 
 | 工具 | 是否写入 | 用途 |
 |---|---:|---|
-| `thread_rebuild_doctor` | 否 | 检查项目目录、Claude、tmux cc 和未完成 operation |
-| `thread_rebuild_plan` | 否 | 预演筛选结果、token 估算和毒上下文检测 |
+| `thread_rebuild_doctor` | 否 | 检查项目目录、Claude、tmux cc、pane pid 和未完成 operation |
+| `thread_rebuild_dirty` | 否 | 查看脏预算：运行痕迹字节、噪音占比、是否该重建 |
+| `thread_rebuild_plan` | 否 | 预演续窗结果、token 估算和毒上下文检测 |
 | `thread_rebuild_request` | 是 | 用户明确确认后，登记本轮结束后续窗；确认词必须是 `REBUILD` |
 | `thread_rebuild_status` | 否 | 查看最近或指定 operation 的证据与状态 |
 | `thread_rebuild_cancel` | 是 | 取消 pending 请求；确认词必须是 `CANCEL` |
@@ -54,15 +115,18 @@ cancelled                failed       failed      rolled_back / failed
                                   rollback_pending -> rollback_scheduled -> rolled_back
 ```
 
+`failed` 附带 `session_conflict` 时表示第三方已改变 session，需人工复核，不要盲目重试。
+
 ## 安全不变量
 
 - 只读取配置中 `project_dir` 下的 `.jsonl`，拒绝任意路径。
-- 只保留已经闭合的真实 user + assistant 文本 turn。
-- 排除 `tool_result`、meta、sidechain、system-reminder、heartbeat、scheduled-task 等内部 user 形态。
-- 候选 transcript 只允许 `user` / `assistant`，重新生成 sessionId、uuid 和 parentUuid 链。
-- source、candidate、每个注入 item 都记录 SHA-256。
+- 只注入真实的 user / assistant 文本；`tool_result`、`tool_use`、thinking、图片、注入块、sidechain、meta 一律不进新 thread。
+- 候选 transcript 只允许 `user` / `assistant`，重新生成 sessionId，item_id 由 `uuid5(new_session_id, position, source_uuid)` 确定性派生，parentUuid 成链。
+- source、candidate、startup snapshot、每个注入 item 都记录 SHA-256。
 - source 在 prepare 后发生变化时，拒绝激活。
-- candidate 结构验证通过前，绝不切换 tmux。
+- pane 身份或活跃 transcript 变化时，拒绝激活，绝不覆盖第三方 session。
+- candidate 结构验证通过前，绝不切换 tmux；验证由代码完成，不问模型"你都记住了吗"。
+- 硬上限触发的丢弃从最老的整轮开始，并在 `stats.dropped_oldest_turns` 如实计数，绝不静默截断。
 - 旧 transcript 不修改；operation 目录保留完整备份。
 - 切换失败自动尝试 resume 旧 session。
 - MCP 的有副作用工具都有明确确认词，避免模型误触。
@@ -118,25 +182,29 @@ resume_command = ["claude", "--resume", "{session_id}"]
 
 如果 Kael 平时需要其他 Claude 启动参数，在数组末尾逐项追加。
 
-### 3. 先跑 doctor 和 dry-run
+### 3. 先跑 doctor、dirty 和 plan
 
 ```bash
-/opt/kael-thread-rebuild-mcp/.venv/bin/kael-thread-rebuild \
-  --config /etc/kael-thread-rebuild/config.toml doctor
+BIN=/opt/kael-thread-rebuild-mcp/.venv/bin/kael-thread-rebuild
+CFG=/etc/kael-thread-rebuild/config.toml
 
-/opt/kael-thread-rebuild-mcp/.venv/bin/kael-thread-rebuild \
-  --config /etc/kael-thread-rebuild/config.toml plan
+$BIN --config $CFG doctor
+$BIN --config $CFG dirty
+$BIN --config $CFG plan
 ```
 
 验收要求：
 
 - `project_dir_exists=true`
 - `transcript_count>0`
-- `tmux_target_alive=true`
+- `tmux_target_alive=true`、`tmux_pane_pid` 非空
 - `claude_binary` 有绝对路径
 - plan 的 `source_session_id` 非空
 - `blocked_reason` 为空
-- `selected_turns`、`selected_tail` 符合预期
+- `selected_turns == source_turns`（正常情况下应当全带走）
+- `dropped_oldest_turns == 0`
+- `startup_frozen=true`
+- dirty 的 `noise_ratio` 与 `should_rebuild` 符合直觉
 
 ### 4. 接入 Claude Code MCP
 
@@ -154,7 +222,7 @@ claude mcp add --transport stdio --scope user kael-thread-rebuild -- \
 claude mcp get kael-thread-rebuild
 ```
 
-进入 Kael 的 Claude Code 后再用 `/mcp`，必须看到 `kael-thread-rebuild` 已连接且列出 6 个工具。
+进入 Kael 的 Claude Code 后再用 `/mcp`，必须看到 `kael-thread-rebuild` 已连接且列出 7 个工具。
 
 ### 5. 接入 Stop hook
 
@@ -188,20 +256,20 @@ claude mcp get kael-thread-rebuild
 }
 ```
 
-用 Claude Code 的 `/hooks` 只读菜单确认 Stop hook 来源和命令。Hook 从 stdin 接收官方字段 `session_id`、`transcript_path`、`cwd`；本项目不会靠“最新文件”猜真正要切换的活动 transcript。
+用 Claude Code 的 `/hooks` 只读菜单确认 Stop hook 来源和命令。Hook 从 stdin 接收官方字段 `session_id`、`transcript_path`、`cwd`；本项目不会靠"最新文件"猜真正要切换的活动 transcript。
 
 ## 第一次验收：只在人工看守下做
 
 1. 备份整个 Claude 项目目录。
-2. Kael 调 `thread_rebuild_doctor`。
-3. Kael 调 `thread_rebuild_plan`，把结果发给 Uki 看。
+2. Kael 调 `thread_rebuild_doctor` 和 `thread_rebuild_dirty`。
+3. Kael 调 `thread_rebuild_plan`，把结果发给 Uki 看，重点确认 `selected_turns == source_turns`。
 4. Uki 明确同意后，Kael 才能调用：
 
 ```text
 thread_rebuild_request(reason="manual acceptance test", confirmation="REBUILD")
 ```
 
-5. Kael 必须先正常回复“已登记，将在本轮结束后切换”。
+5. Kael 必须先正常回复"已登记，将在本轮结束后切换"。
 6. Stop hook 触发后，观察：
 
 ```bash
@@ -227,15 +295,19 @@ tmux attach -t cc
 ├── worker.log
 ├── operations/<operation-id>.json
 └── artifacts/<operation-id>/
-    └── <old-session-id>.jsonl
+    ├── <old-session-id>.jsonl
+    └── startup_snapshot.txt
 ```
 
-operation JSON 保存 source/candidate digest、manifest、item 顺序、筛选统计、验证结果、tmux 命令参数与最终状态，但不会把完整对话正文复制进审计 JSON。完整原文只在权限为 0600 的冷仓备份中。
+operation JSON 保存 source/candidate/startup digest、manifest、item 顺序、脏预算快照、CAS 凭据、验证结果、tmux 命令参数与最终状态，但不会把完整对话正文复制进审计 JSON。完整原文只在权限为 0600 的冷仓备份中。
 
 ## 当前边界
 
 - v0.1 针对单个 `tmux cc`、单个 Claude Code project 目录。
-- 不自动按 token 阈值触发；先由 Uki/Kael 手动确认，稳定后再增加策略。
+- 启动包只能冻结 transcript 内那一份，Claude Code 自己重新生成的 system prompt 不受控（见上文）。
+- 没有 ACTIVE barrier：无法阻止用户在重建排队期间继续发消息，靠的是 Stop hook 时序加 source digest 校验。
+- CAS 用 pane pid 与 transcript 活跃度做身份近似，不是运行时原语。
+- 不自动触发：`dirty` 只给出 `should_rebuild` 建议，真正的 `request` 仍需人明确确认。稳定后再考虑自动化。
 - 不修改 Ombre Brain、不写长期记忆、不把冷仓自动召回。
 - 不支持 `claude -p`、无头批量调用或多个 tmux session 并行切换。
 - Claude Code transcript 格式升级后，必须先跑测试与 dry-run，不能直接在主 session 试。
@@ -243,13 +315,17 @@ operation JSON 保存 source/candidate digest、manifest、item 顺序、筛选�
 ## 本地测试
 
 ```bash
-python3 -m venv .venv
+python3 -m venv .venv        # 需要 Python 3.11+
 .venv/bin/pip install -e '.[dev]'
 .venv/bin/pytest
 ```
 
-测试不会启动真实 Claude，也不会操作真实 tmux；tmux 切换通过 fake controller 验证。
+测试不会启动真实 Claude，也不会操作真实 tmux；tmux 切换通过 fake controller 验证，CAS 冲突、连发消息保留、未闭合尾部保留、注入剥离、脏预算触发都有专门用例。
 
 ## 设计来源与许可证
 
-筛选思路参考 [LMC-5 Refined Session Carryover](https://github.com/dankefox/swap-tutorial)，但本仓库没有引入 LMC-5 记忆数据库。切换安全性采用耐久 operation、结构验证、source digest、延迟激活和失败回旧 session。代码采用 MIT License。
+- 筛选与四层结构（durable / startup / bridging / evidence）参考 [LMC-5 Refined Session Carryover](https://github.com/dankefox/swap-tutorial)。
+- "不判断经历重要性""脏预算触发""冻结启动快照""CAS 切换""恢复只证明状态不重演动作"等原则参考 AcheHome 的 Thread Rebuild 实现整理（2026-08-14）。
+- 本仓库没有引入 LMC-5 记忆数据库，长期记忆仍由 Ombre Brain 独立持有。
+
+代码采用 MIT License。
