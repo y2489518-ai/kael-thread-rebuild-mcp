@@ -25,7 +25,7 @@
 
 - Python 3.11+（`python3 -c 'import sys; print(sys.version_info)'`）
 - tmux 可用
-- 能 clone 私仓 `y2489518-ai/kael-thread-rebuild-mcp`（`gh auth status` 或部署密钥）
+- 能 clone `y2489518-ai/kael-thread-rebuild-mcp`
 - 磁盘：候选 transcript 和冷仓备份会占空间，先看一眼 `df -h`
 
 ---
@@ -34,7 +34,7 @@
 
 ```bash
 cd /opt
-git clone <私仓地址> kael-thread-rebuild-mcp
+git clone https://github.com/y2489518-ai/kael-thread-rebuild-mcp.git kael-thread-rebuild-mcp
 cd kael-thread-rebuild-mcp
 chmod +x scripts/install-vps.sh
 sudo ./scripts/install-vps.sh

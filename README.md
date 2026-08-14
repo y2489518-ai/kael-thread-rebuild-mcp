@@ -137,7 +137,7 @@ cancelled                failed       failed      rolled_back / failed
 
 ```bash
 cd /opt
-git clone <本私仓地址> kael-thread-rebuild-mcp
+git clone https://github.com/y2489518-ai/kael-thread-rebuild-mcp.git kael-thread-rebuild-mcp
 cd kael-thread-rebuild-mcp
 chmod +x scripts/install-vps.sh
 sudo ./scripts/install-vps.sh
