@@ -124,6 +124,38 @@ def test_startup_snapshot_is_frozen_once_and_not_duplicated():
     assert "CLAUDE.md 当时的样子" not in joined(plain)
 
 
+def test_slash_command_traces_are_not_mistaken_for_the_startup_package():
+    """/model 之类留下的 caveat 和 command 痕迹是运行痕迹，不是启动包。"""
+    rows = [
+        user("<local-command-caveat>Caveat: ...</local-command-caveat>", uuid="u-caveat", isMeta=True),
+        user("<command-name>/model</command-name><command-args>opus</command-args>", uuid="u-cmd", isMeta=True),
+        user("真正的第一句话", uuid="u-real"),
+        assistant("回答"),
+    ]
+    assert freeze_startup(rows) is None
+
+    result = build_source(rows)
+    assert result.startup_frozen is False
+    text = joined(result)
+    assert "真正的第一句话" in text
+    assert "local-command-caveat" not in text
+    assert "/model" not in text
+
+
+def test_startup_package_is_found_behind_slash_command_traces():
+    """启动注入排在 slash 痕迹后面时，仍然要认出来。"""
+    rows = [
+        user("<local-command-caveat>Caveat: ...</local-command-caveat>", uuid="u-caveat", isMeta=True),
+        user("<system-reminder>claudeMd: 当时的规矩</system-reminder>\n开场白", uuid="u-start"),
+        assistant("开场回答"),
+    ]
+    snapshot = freeze_startup(rows)
+    assert snapshot is not None and snapshot["uuid"] == "u-start"
+    result = build_source(rows)
+    assert result.startup_frozen is True
+    assert "当时的规矩" in joined(result)
+
+
 def test_no_scoring_every_closed_turn_is_carried():
     """不再按'重要不重要'打分：闭合回合全带走。"""
     rows = []

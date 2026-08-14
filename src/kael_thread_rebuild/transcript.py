@@ -236,18 +236,24 @@ def conversation_turns(rows: Sequence[dict[str, Any]], max_event_chars: int, *, 
 def freeze_startup(rows: Sequence[dict[str, Any]]) -> dict[str, Any] | None:
     """冻结当时真正用过的启动上下文。
 
-    Claude Code 把 CLAUDE.md、记忆索引、环境说明注入在第一条 user 事件里。
-    重建时必须原样搬走这一份，而不是让新 session 拿今天的文件重新生成一个
-    从未真实存在过的"过去"。
+    Claude Code 把 CLAUDE.md、记忆索引、环境说明注入在 <system-reminder> 里，
+    所以只认这个容器。`/model` 之类 slash 命令留下的 caveat 和 command 痕迹
+    虽然也是注入块，但它们是运行痕迹不是启动包，抓错了等于把一条无关的系统
+    提示钉在新窗口最前面。
+
+    走到第一条真话仍没见到启动注入，就说明这段 session 没有可冻结的启动包，
+    返回 None，绝不拿别的东西凑数。
     """
     for row in rows:
-        if row.get("type") != "user" or has_tool_result(row):
+        if row.get("type") != "user" or row.get("isSidechain") or has_tool_result(row):
             continue
         raw = event_text(row)
         if not raw:
             continue
-        if strip_injected_blocks(raw) != raw:
+        if "<system-reminder" in raw.lower():
             return copy.deepcopy(row)
+        if row.get("isMeta"):
+            continue
         if is_real_user(row):
             return None
     return None
