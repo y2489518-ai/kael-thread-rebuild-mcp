@@ -168,6 +168,39 @@ $BIN --config $CFG plan
 
 ## 第 4 步：在**测试 session** 上做一次完整切换演练（命门）
 
+> ## ✅ 已于 2026-08-15 00:39 在 VPS 上验过，通过
+>
+> operation `06e2ceb9-657e-4f88-b7cd-4cfe0aae2f2f`，全程 10 秒（16:39:02 → 16:39:12 UTC）。
+>
+> | 验收项 | 结果 |
+> |---|---|
+> | `status` 最终为 `activated` | ✅ 不是卡在 activating |
+> | drill pane 换成了新进程 | ✅ `cas_pane_pid` 2999165 → `cas_pane_pid_after` 3002492 |
+> | 新窗口答得出切换前聊的内容 | ✅ 两个暗号（「月鳞鲤只咬水面上倒映的满月」/「drill-0815」）全答对，且明确要求它不许翻文件不许调工具 |
+> | 旧 transcript 仍在、没被改 | ✅ |
+> | artifacts 里有完整备份 | ✅ 27332 字节 |
+> | `verification` | ✅ `{ok: true, errors: [], item_count: 4}` |
+> | `stats` | ✅ `selected_turns == source_turns == 2`，`dropped_oldest_turns = 0` |
+> | 落盘的 `tmux_command` | ✅ `respawn-pane -k -t **drill:0.0**`，全程没碰过 `cc` |
+> | 执行期间 `cc:0.0` 的 pane_pid | ✅ 全程 2978997，一次没抖 |
+>
+> **结论：pane 被 `-k` 杀掉的那一刻，worker 活下来了，并且把事做完了。** 这条地基成立。
+>
+> ### 演练时踩到的坑（下一个人必看）
+>
+> **在 drill 里起 `claude` 会连带起 telegram 插件，抢走 bot token，把主会话的 TG 打哑。**
+> Telegram 只允许一个 `getUpdates` 消费者，新实例一抢，主会话的 poller 收到 409 就永久退出。
+> 这不是"聊两句"才有的问题——演练的 `respawn` 动作本身就要跑 `claude --resume`，**每演练一次就会抢一次**。
+>
+> 试过的路：
+> - `--bare`：**用不了**。它要求 `ANTHROPIC_API_KEY` 或 `apiKeyHelper`，OAuth（订阅登录）不支持
+> - `--strict-mcp-config`：只管 MCP servers，telegram 是 **plugin**，未必受控（没实测）
+> - 实际采用：**演练前在 `/plugins` 里把 telegram 插件禁掉**，演练完再手动 reconnect。最省事，也最干净
+>
+> 另外 `worker.log` 全程是空的，但 operation 记录（`operations/<id>.json`）完整——**别把"日志为空"当成 worker 没起来**，看 operation 文件才准。
+
+
+
 这一步验的是整个设计的地基：**pane 被 `-k` 杀掉的那一刻，worker 能不能活下来把事做完。**这条在 Mac 上验不了，只能在这里验。
 
 ```bash
@@ -214,6 +247,14 @@ tmux attach -t drill
 **如果 `status` 卡在 `activating` 或 worker.log 空白 —— 停。**那说明 worker 没能在 pane 被杀后活下来，这是整个方案的地基问题，立刻报告，不要接着往 `cc` 上装。
 
 演练完清理：`tmux kill-session -t drill`，`drill.toml` 和 drill 的 state 目录可以留着当证据。
+
+**但 `kill-session` 之后必须查孤儿**（0815 实测踩到）：session 杀掉了，里面那个 `claude --resume <新id>` 进程会挂到 PPID=1 继续活着，连带它的插件子进程一起。留着它既浪费资源，也会在 telegram 插件重新启用时再抢一次 token。
+
+```bash
+tmux kill-session -t drill
+pgrep -a claude                    # 应该只剩承载你的那一个
+ps -eo pid,ppid,cmd | awk '$2==1 && ($3 ~ /claude|bun/)'   # PPID=1 的野进程
+```
 
 ---
 
@@ -327,12 +368,21 @@ claude mcp get kael-thread-rebuild
 - 真实对话零丢失：原文 103 万字符里 97 万是 skill 正文注入，真正的对话 4.8 万全部带走
 - 48 项单元测试，含 CAS 冲突、连发消息保留、未闭合尾部保留、注入剥离、脏预算、worker 独立进程链路
 
+## 已经在 VPS 上补验的（2026-08-15 00:39）
+
+- ✅ **tmux 真的 respawn 换掉 pane**：`cas_pane_pid` 2999165 → 3002492
+- ✅ **worker 在 pane 被 `-k` 杀掉后活下来并把事做完**：`status = activated`，全程 10 秒；新窗口在"不许翻文件、不许调工具"的前提下答对了切换前记的两个暗号
+
+演练 operation `06e2ceb9-657e-4f88-b7cd-4cfe0aae2f2f`，完整验收表见第 4 步开头。
+
 ## 还没验的，就是你要验的
 
-- tmux 真的 respawn 换掉 pane（第 4 步）
-- **worker 在 pane 被 `-k` 杀掉后是否真的活下来**（第 4 步，命门）
 - Claude Code 的 Stop hook 是否真的触发并传对 `transcript_path`（第 6 步）
 - MCP 挂上后 7 个工具能否正常调用（第 5 步）
+
+> 注意：第 4 步的演练是**手工喂 `hook-stop` 的输入**验的，绕过了 Claude Code 自己的 Stop hook。
+> 也就是说「worker 能不能活下来」已经成立，但「Stop hook 会不会按时触发、`transcript_path` 传得对不对」
+> 仍然没验——那是第 6 步的事，别把第 4 步的通过当成它也通过了。
 
 ---
 
