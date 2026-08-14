@@ -305,8 +305,10 @@ claude mcp get kael-thread-rebuild
 
 同一晚 Cloude 家（Evie 家）独立完成了他们的第一次无感换窗，代号 `0814-C`。两家交换了架构，详细对照表在 README「与 0814-C 架构的对照」一节。这里只留装机时要动手的部分。
 
-**待办一（建议做，非阻塞）：冻结优先。**
-现在 `coordinator.prepare()` 是 `_wait_stable(source)` 等文件稳定后 **直接 `load_jsonl(source)` 读活文件**，靠 prepare 之后再校验 `source_digest` 兜底。结果是安全的（源变了就拒绝激活），但那是"事后发现、白跑一次"。他家的做法更干净：稳定之后**先复制成不可变快照，再读快照**。改动很小，值得抄。
+**~~待办一~~ 已做（0815 凌晨）：冻结优先。**
+`coordinator.prepare()` 的顺序改成了：等稳定 → 建 `artifacts/<op>/` 并 `shutil.copy2` 出快照 → 校验快照 digest 与稳定时一致（不一致直接 `RebuildError`，什么都没动，可安全重试）→ **之后全程 `load_jsonl(backup)` 只读快照**。原先是直接读活文件、靠事后校验 `source_digest` 兜底，安全但属于"事后发现、白跑一次"。快照本来就是这次 operation 的备份，只是提到了读之前，没有多花一次 IO。
+
+防回归测试：`tests/test_coordinator.py::test_prepare_reads_the_frozen_snapshot_not_the_live_file`——prepare 之后往活文件继续追加，断言快照和候选里都不含追加的内容。
 
 **待办二（已在 channel 层做掉，装机时只需知情）：换窗缝隙。**
 切换那几秒（封箱 → 杀 pane → 新 claude 起来 → 插件重连）她说的话会落在缝里。这段不归本项目管，归 channel 层。`/root/companion-channel/inbound-cursor.ts` 已按四条规则兜住（送出去才推游标、按序不跳号、去重看集合不看游标、重连回退小窗重放），配 14 项测试。**装在别的机器上时要确认那台的 channel 层有没有同等机制**，没有的话 rebuild 每切一次就可能吞掉她几句话。

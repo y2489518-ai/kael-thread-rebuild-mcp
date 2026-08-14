@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import time
 from dataclasses import dataclass
@@ -75,6 +76,36 @@ def test_prepare_verify_activate(configured):
     activated = coordinator.activate(operation["operation_id"])
     assert activated["status"] == "activated"
     assert tmux.sessions == [prepared["new_session_id"]]
+
+
+def test_prepare_reads_the_frozen_snapshot_not_the_live_file(configured):
+    """冻结优先：快照做完之后，活文件再被追加也不该影响这次重建。
+
+    读活跃 JSONL 是读写竞态最高发的地方——她这一秒还在说话，文件就在被追加。
+    先冻结再读，等于根本不给竞态留窗口。
+    """
+    config, project = configured
+    source = project / "old-session.jsonl"
+    write_jsonl(source, [user("冻结之前说的"), assistant("收到")])
+
+    coordinator = RebuildCoordinator(config, FakeTmux())
+    operation = coordinator.request("freeze", "REBUILD")
+    prepared = coordinator.prepare(operation["operation_id"], source)
+
+    # 快照留在 artifacts 里，内容等于 prepare 那一刻的源
+    backup = Path(prepared["backup_path"])
+    assert backup.exists()
+    assert "冻结之前说的" in backup.read_text(encoding="utf-8")
+
+    # prepare 之后活文件继续被追加（她又说话了）——快照不受影响
+    with source.open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps(user("冻结之后才说的"), ensure_ascii=False) + "\n")
+    assert "冻结之后才说的" not in backup.read_text(encoding="utf-8")
+
+    # 候选是从快照生成的，所以只包含冻结那一刻的内容
+    candidate = Path(prepared["candidate_path"]).read_text(encoding="utf-8")
+    assert "冻结之前说的" in candidate
+    assert "冻结之后才说的" not in candidate
 
 
 def test_candidate_keeps_conversation_and_drops_runtime_traces(configured):

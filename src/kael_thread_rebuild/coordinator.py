@@ -248,7 +248,23 @@ class RebuildCoordinator:
             source_digest = self._wait_stable(source)
             source_mtime = source.stat().st_mtime
             pane_pid = self._pane_identity()
-            source_events = load_jsonl(source)
+
+            # 冻结优先：先把源复制成不可变快照，之后只读快照，绝不再碰那个
+            # 正在被写的活文件。等稳定 + 事后校验 digest 也能保证安全，但那是
+            # "事后发现、白跑一次"；先冻结是"根本不给竞态留窗口"。
+            # 快照本来就要留（它就是这次 operation 的备份），只是提到读之前。
+            operation_dir = self.config.state_dir / "artifacts" / operation_id
+            operation_dir.mkdir(parents=True, exist_ok=False, mode=0o700)
+            backup = operation_dir / source.name
+            shutil.copy2(source, backup)
+            os.chmod(backup, 0o600)
+            frozen_digest = file_digest(backup)
+            if frozen_digest != source_digest:
+                raise RebuildError(
+                    "source changed while it was being snapshotted; nothing was touched, retry"
+                )
+
+            source_events = load_jsonl(backup)
             old_session_id = session_id_from_events(source_events)
             if not old_session_id:
                 raise RebuildError("source transcript has no sessionId")
@@ -273,11 +289,6 @@ class RebuildCoordinator:
                 operation["candidate_path"] = str(candidate)
                 self.state.save(operation)
 
-            operation_dir = self.config.state_dir / "artifacts" / operation_id
-            operation_dir.mkdir(parents=True, exist_ok=False, mode=0o700)
-            backup = operation_dir / source.name
-            shutil.copy2(source, backup)
-            os.chmod(backup, 0o600)
             if snapshot is not None:
                 atomic_write_text(
                     operation_dir / "startup_snapshot.txt",
