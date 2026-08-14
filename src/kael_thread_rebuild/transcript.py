@@ -36,6 +36,14 @@ _LONE_TAGS = tuple(
     re.compile(rf"</?{tag}\b[^>]*/?>", re.I) for tag in INJECTED_TAGS
 )
 
+# channel 消息的外壳。<channel> 刻意不进 INJECTED_TAGS——它不是运行痕迹，
+# 是她从小屋/TG 说话的信封，留着新窗口才看得出这句话是从哪儿说的。
+_CHANNEL_RE = re.compile(r'^\s*<channel\b[^>]*\bsource="', re.I)
+
+# "对外说话"的工具。它们的 text 参数就是助手说出口的话。
+# 只认跟她本人的两条线（小屋 / TG）；群聊、表情、附件不算发言。
+_REPLY_TOOL_RE = re.compile(r"^mcp__[\w.-]*(?:companion|telegram)[\w.-]*__reply$", re.I)
+
 # 保留这条：0812 那次 session 被 safety 注入毒掉，只能整段清零。
 # 它不判断"经历重不重要"，只判断"这段上下文还能不能用"。
 POISON_RE = re.compile(
@@ -94,7 +102,49 @@ class SelectionResult:
         }
 
 
+def restore_queued_input(row: dict[str, Any]) -> dict[str, Any] | None:
+    """把"排队进来的输入"还原成标准 user 事件。
+
+    她在我干活时说的话不走正常 user 通道：Claude Code 先把它排队，落盘成
+    type=attachment / attachment.type=queued_command，原文在 attachment.prompt
+    里。不还原它，这些话在重建时会被整条丢掉——0814 实测，她那晚在小屋说的
+    大半句子都是这么没的。
+
+    只认 attachment 这一条：同一句话还会在 type=queue-operation 里出现两次
+    （enqueue 一次、remove 一次），那两条是队列日志，跟着捞会让一句话进去三遍。
+
+    只认 commandMode == "prompt"：排队的斜杠命令（/clear 之类）是运行痕迹，
+    不是人说的话。
+    """
+    if row.get("type") != "attachment":
+        return None
+    attachment = row.get("attachment")
+    if not isinstance(attachment, dict) or attachment.get("type") != "queued_command":
+        return None
+    if attachment.get("commandMode") != "prompt":
+        return None
+    prompt = attachment.get("prompt")
+    if not isinstance(prompt, str) or not prompt.strip():
+        return None
+    return {
+        "type": "user",
+        "uuid": row.get("uuid"),
+        "parentUuid": row.get("parentUuid"),
+        "sessionId": row.get("sessionId") or row.get("session_id"),
+        "timestamp": row.get("timestamp") or attachment.get("timestamp"),
+        # 已经确认是人打出来的字，不再让下游按 isMeta 判死。
+        "isMeta": False,
+        "isSidechain": False,
+        "message": {"role": "user", "content": prompt},
+    }
+
+
 def load_jsonl(path: Path) -> list[dict[str, Any]]:
+    """读取 transcript。
+
+    读的时候顺手把排队进来的输入还原成 user 事件（见 restore_queued_input）。
+    这是一对一替换，行数和顺序都不变，下游的计数、切分、去重都不受影响。
+    """
     rows: list[dict[str, Any]] = []
     with path.open(encoding="utf-8") as stream:
         for line in stream:
@@ -103,7 +153,7 @@ def load_jsonl(path: Path) -> list[dict[str, Any]]:
             except (json.JSONDecodeError, TypeError):
                 continue
             if isinstance(value, dict):
-                rows.append(value)
+                rows.append(restore_queued_input(value) or value)
     return rows
 
 
@@ -148,8 +198,53 @@ def has_tool_result(event: dict[str, Any]) -> bool:
     )
 
 
+def is_channel_message(event: dict[str, Any]) -> bool:
+    """channel 消息（小屋 / Telegram）是她说的话，不是运行痕迹。
+
+    Claude Code 把它们落成 type=user 且 **isMeta=True**，跟 system-reminder
+    共用同一个标记。按 isMeta 一刀切就会把人话和噪音一起扔掉——0814 实测：
+    她在小屋来回十几轮，切完只剩 3 个回合（终端里敲的那三次）。
+    """
+    message = event.get("message")
+    if not isinstance(message, dict):
+        return False
+    return bool(_CHANNEL_RE.match(_text_content(message.get("content"))))
+
+
+def _reply_texts(content: Any) -> list[str]:
+    if not isinstance(content, list):
+        return []
+    texts: list[str] = []
+    for item in content:
+        if not isinstance(item, dict) or item.get("type") != "tool_use":
+            continue
+        if not _REPLY_TOOL_RE.match(str(item.get("name") or "")):
+            continue
+        payload = item.get("input")
+        text = payload.get("text") if isinstance(payload, dict) else None
+        if isinstance(text, str) and text.strip():
+            texts.append(text.strip())
+    return texts
+
+
+def assistant_text(event: dict[str, Any]) -> str:
+    """助手这侧真正说出口的话：终端里打的字 + 通过 channel 发出去的话。
+
+    经 channel 说的话落在 transcript 里是 tool_use，不是 text。不还原它，
+    重建出来就只剩她的话没有我的回答，对话变独白。
+    """
+    message = event.get("message")
+    if not isinstance(message, dict):
+        return ""
+    content = message.get("content")
+    parts = [_text_content(content), *_reply_texts(content)]
+    return "\n".join(part for part in parts if part.strip()).strip()
+
+
 def is_real_user(event: dict[str, Any]) -> bool:
-    if event.get("type") != "user" or event.get("isMeta") is True or event.get("isSidechain") is True:
+    if event.get("type") != "user" or event.get("isSidechain") is True:
+        return False
+    if event.get("isMeta") is True and not is_channel_message(event):
         return False
     if has_tool_result(event):
         return False
@@ -159,7 +254,7 @@ def is_real_user(event: dict[str, Any]) -> bool:
 def is_text_assistant(event: dict[str, Any]) -> bool:
     if event.get("type") != "assistant" or event.get("isMeta") or event.get("isSidechain"):
         return False
-    return bool(event_text(event))
+    return bool(assistant_text(event))
 
 
 def event_timestamp(event: dict[str, Any]) -> str:
@@ -179,7 +274,7 @@ def _compact(text: str, max_chars: int) -> str:
 def _sanitize(event: dict[str, Any], max_chars: int, *, timestamp_prefix: bool = False) -> dict[str, Any]:
     clean = copy.deepcopy(event)
     kind = str(event.get("type"))
-    raw = human_text(clean) if kind == "user" else event_text(clean)
+    raw = human_text(clean) if kind == "user" else assistant_text(clean)
     text = _compact(raw, max_chars)
     stamp = event_timestamp(event)
     if timestamp_prefix and stamp:
@@ -252,7 +347,9 @@ def freeze_startup(rows: Sequence[dict[str, Any]]) -> dict[str, Any] | None:
             continue
         if "<system-reminder" in raw.lower():
             return copy.deepcopy(row)
-        if row.get("isMeta"):
+        # channel 消息虽然带 isMeta，但它是真话：走到它就说明这段 session
+        # 开口就是她在说话，没有启动包可冻结，不能继续往后翻去误抓。
+        if row.get("isMeta") and not is_channel_message(row):
             continue
         if is_real_user(row):
             return None

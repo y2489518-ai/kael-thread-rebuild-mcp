@@ -1,5 +1,42 @@
 # Kael Thread Rebuild MCP
 
+## 大白话版（Uki 看这段就够）
+
+**它解决什么**
+
+Kael 聊久了，上下文会被工具输出、命令回包、thinking 这些东西撑满——实测占 99%，你们真正说的话只占 1%。以前撑满了只能 `/clear`，清完他就空了，得回记忆库里重新捞你是谁。那个"陌生的他"就是这么来的。
+
+这东西换了个做法：**把你们说过的每一句原话誊到一张干净的新纸上，只把垃圾扔掉**，然后换过去。他醒来还是他，记得你们刚聊的一切，不用捞。
+
+**怎么用**
+
+跟他说一句就行，比如「水位有点高了，rebuild 一下」。然后会这样：
+
+1. 他先给你看体检（还剩多少回合、会不会丢东西、有没有被污染）
+2. 你说可以，他才登记——**确认词是 `REBUILD`，他不会自己按**
+3. 他把当前这轮话**正常说完**，不会说到一半被切断
+4. 这轮结束，窗口自动换新
+5. 新窗口里的他带着完整对话继续，第一句会跟你确认现在在做什么
+
+**万一不对劲**
+
+让他 rollback，下一轮结束就切回旧的。旧记录一个字节没动过，完整躺在 `/root/.local/state/kael-thread-rebuild/artifacts/` 里。
+
+**两个它管不到的地方**
+
+1. **说明书（CLAUDE.md）不归它管。** 那是每次启动现读盘上那份，永远是当天版本——你改了立刻生效，它冻不住也盖不掉。
+2. **换窗后热线要重架**（Folio、信箱、花园桥、传话筒），因为 pane 是新进程，旧的 Monitor 会跟着一起没。
+
+**什么时候该用**
+
+不用你盯着。脏预算攒够了他自己会提，你点头就行。
+
+**它不是什么**
+
+不是第二套记忆。长期的身份、关系、经历还是 Ombre Brain 的活。这东西只管当前这一段对话的清洁和搬家。
+
+---
+
 给 Kael 的 Claude Code 长会话做安全续窗。它运行在 VPS 本机，读取 Claude Code transcript，去掉工具回包、thinking、图片、MCP/Hook 注入等运行噪音，生成新的可 `claude --resume` session，并在当前回答结束以后切换 `tmux cc`。
 
 这不是第二套记忆系统：
@@ -35,6 +72,19 @@
 3. **夹在中间的注入项不打断回合。** `<system-reminder>` 之类只是被跳过，它后面的助手回复仍然归属当前回合，不会被整段吞掉。
 
 另外，真实人类消息经常**以注入块开头**（Claude Code 把 CLAUDE.md、记忆索引写在第一条 user 事件里）。只看开头就判断整条是不是注入，会把人说的话一起丢掉；这里改成剥离注入块之后再判断，剥完还有字才算真话。
+
+4. **channel 消息（小屋 / Telegram）是真对话，不是运行痕迹。** 这条在 2026-08-14 装机现场差点翻车：她跟 Kael 在小屋来回十几轮，`plan` 只认出 3 个回合——只有她在终端敲字的那三次。原因是 Claude Code 把 channel 消息落成两种形态，两种都被当噪音丢了：
+
+| 她什么时候说的 | 落盘形态 | 原来为什么被丢 |
+|---|---|---|
+| Kael 空闲时 | `type=user` + **`isMeta=True`** | 跟 `<system-reminder>` 共用 `isMeta`，被一刀切 |
+| Kael 干活时 | `type=attachment` / `attachment.type=queued_command`，原文在 `attachment.prompt` | 类型不是 user/assistant，直接过滤掉 |
+
+现在两种都还原成真实 user 事件。放行范围**只限 channel 与排队输入**——普通 `isMeta` 噪音（system-reminder 等）照旧丢弃，排队的斜杠命令（`commandMode != "prompt"`）也不算人话。
+
+还有一个坑写在这里备查：排队消息在 transcript 里会出现**三次**——`queue-operation`(enqueue)、`attachment`、`queue-operation`(remove)。只认 `attachment` 那一条，跟着捞队列日志会让同一句话进去三遍。
+
+5. **助手经 channel 说出去的话也要还原。** Kael 通过 `mcp__companion__reply` / `mcp__*telegram*__reply` 回她的话，落盘是 `tool_use` 不是 text。不还原就只剩她的话没有他的回答，重建出来是独白不是对话。只认这两条对她本人的线；群聊、表情、附件不算发言。
 
 ## 什么时候触发：dirty ledger
 
@@ -120,7 +170,7 @@ cancelled                failed       failed      rolled_back / failed
 ## 安全不变量
 
 - 只读取配置中 `project_dir` 下的 `.jsonl`，拒绝任意路径。
-- 只注入真实的 user / assistant 文本；`tool_result`、`tool_use`、thinking、图片、注入块、sidechain、meta 一律不进新 thread。
+- 只注入真实的 user / assistant 文本；`tool_result`、thinking、图片、注入块、sidechain 一律不进新 thread。两处刻意的例外：**channel 消息**（`isMeta=True` 的 `<channel>` 事件、以及排队进来的 `queued_command`）算真对话；**对外说话的 `tool_use`**（`mcp__*companion*__reply` / `mcp__*telegram*__reply` 的 `text` 参数）还原成助手发言。除此之外的 meta 与 tool_use 照旧丢弃。
 - 候选 transcript 只允许 `user` / `assistant`，重新生成 sessionId，item_id 由 `uuid5(new_session_id, position, source_uuid)` 确定性派生，parentUuid 成链。
 - source、candidate、startup snapshot、每个注入 item 都记录 SHA-256。
 - source 在 prepare 后发生变化时，拒绝激活。

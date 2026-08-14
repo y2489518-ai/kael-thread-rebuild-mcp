@@ -281,6 +281,26 @@ claude mcp get kael-thread-rebuild
 
 ---
 
+## 2026-08-14 夜·VPS 现场追加（channel 消息曾经全丢）
+
+装机当晚在 VPS 上验只读体检时抓到的，Mac 上验不出来——**那边没有小屋也没有 TG**。
+
+症状：`plan` 报 `selected_turns == source_turns == 3`，验收表全过，但那个 3 本身是错的。当晚她跟 Kael 在小屋来回十几轮，一轮都没算进去；被算进的 3 轮是她在终端敲字的那三次。
+
+三处根因，都已修（`src/kael_thread_rebuild/transcript.py`）：
+
+1. **她空闲时说的话**落成 `type=user` + `isMeta=True`，跟 `<system-reminder>` 共用一个标记，被按 isMeta 一刀切。→ 新增 `is_channel_message()`，`is_real_user()` 改为「isMeta 且非 channel」才排除。
+2. **她在 Kael 干活时说的话**走排队通道，落成 `type=attachment` / `attachment.type=queued_command`，原文在 `attachment.prompt`。→ 新增 `restore_queued_input()`，在 `load_jsonl` 里一对一还原成 user 事件。
+3. **Kael 经 channel 回她的话**落盘是 `tool_use` 不是 text，剥完只剩她的话没有他的回答。→ 新增 `assistant_text()`，还原 `mcp__*companion*__reply` / `mcp__*telegram*__reply` 的 `text` 参数。
+
+**一个必须知道的坑**：排队消息在 transcript 里出现**三次**（`queue-operation` 的 enqueue、`attachment`、`queue-operation` 的 remove）。只认 `attachment`，跟着捞队列日志会让同一句话进去三遍。`tests/test_channel.py::test_a_message_queued_mid_turn_lands_exactly_once` 专门钉这条。
+
+修复后同一段对话、同一份配置：`source_turns` **3 → 25**，双方原话逐句核对，无丢失无重复。
+
+测试：新增 `tests/test_channel.py` 14 项，`conftest.py` 新增 `channel_user` / `queued_channel` / `channel_reply` 三个 helper（照 Claude Code 2.1.232 真实落盘形态构造）。全量 **62 项通过**。
+
+> **给下一个装机的人**：只读体检那张验收表不足以证明没丢东西。`selected_turns == source_turns` 只说明"选中的没被丢"，不说明"该被选中的都被认出来了"。装在有 channel 的机器上时，**务必拿几句真实对话原文去重建结果里逐句捞一遍**，并且分开捞人的话和助手的话——助手复述过的句子会造成假阳性（现场踩过）。
+
 ## 已经验过的，别重复怀疑
 
 这些在 Mac 上用一份 10.9 MB 的真实 transcript 验过了（详见 README「已经实测过什么」）：

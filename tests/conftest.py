@@ -38,6 +38,66 @@ def assistant(text: str, session: str = "old-session", **extra) -> dict:
     }
 
 
+def channel_user(text: str, source: str = "companion", session: str = "old-session", **extra) -> dict:
+    """她从小屋 / Telegram 说的话。
+
+    Claude Code 把 channel 消息落成 type=user 且 **isMeta=True**，跟
+    system-reminder 共用同一个标记 —— 这正是 0814 那次把她十几轮对话
+    全丢掉的原因，所以这里刻意照着真实落盘形态构造。
+    """
+    body = (
+        f'<channel source="{source}" chat_id="me" message_id="9493" '
+        f'user="human" ts="2026-08-14T15:23:11Z">\n{text}\n</channel>'
+    )
+    extra.setdefault("isMeta", True)
+    return user(body, session=session, **extra)
+
+
+def queued_channel(text: str, source: str = "companion", session: str = "old-session", **extra) -> dict:
+    """她在助手干活时说的话 —— 走排队通道，落成 attachment 而不是 user。
+
+    照抄 Claude Code 2.1.232 的真实落盘形态（0814 现场取样）。
+    """
+    envelope = (
+        f'<channel source="{source}" chat_id="me" message_id="9514" '
+        f'user="human" ts="2026-08-14T15:29:27Z">\n{text}\n</channel>'
+    )
+    return {
+        "type": "attachment",
+        "uuid": extra.pop("uuid", f"q-{abs(hash(text))}"),
+        "parentUuid": None,
+        "isSidechain": False,
+        "sessionId": session,
+        "session_id": session,
+        "timestamp": extra.pop("timestamp", "2026-08-14T15:29:27.979Z"),
+        "attachment": {
+            "type": "queued_command",
+            "prompt": envelope,
+            "commandMode": "prompt",
+            "origin": {"kind": "channel", "server": source},
+            "timestamp": "2026-08-14T15:29:27.979Z",
+            "isMeta": True,
+        },
+        **extra,
+    }
+
+
+def channel_reply(text: str, tool: str = "mcp__companion__reply", session: str = "old-session", **extra) -> dict:
+    """助手通过 channel 说出去的话 —— 落盘是 tool_use，不是 text。"""
+    return {
+        "type": "assistant",
+        "sessionId": session,
+        "uuid": extra.pop("uuid", f"cr-{abs(hash(text))}"),
+        "parentUuid": None,
+        "timestamp": extra.pop("timestamp", "2026-08-14T10:00:02Z"),
+        "message": {
+            "role": "assistant",
+            "content": [{"type": "tool_use", "name": tool, "input": {"chat_id": "me", "text": text}}],
+        },
+        **extra,
+    }
+
+
 def tool_call(name: str, payload: str, session: str = "old-session") -> dict:
     return {
         "type": "assistant",
