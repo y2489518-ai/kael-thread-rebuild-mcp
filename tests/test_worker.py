@@ -11,10 +11,30 @@ import pytest
 
 from kael_thread_rebuild.coordinator import RebuildCoordinator
 
-from conftest import assistant, user, write_jsonl
+from conftest import SAFE_TMUX_TARGET, assistant, user, write_jsonl
 
 
 TERMINAL = {"activated", "failed", "rolled_back", "cancelled"}
+
+
+def test_the_suite_never_points_at_a_live_tmux_session(configured):
+    """防回归，这条是拿人命换来的。
+
+    worker 是独立子进程，自己 new 一个真的 TmuxController，mock 注入不进去。
+    测试配置里的 tmux_target 曾经是 "cc:0.0"，在装机的 VPS 上正好命中了
+    正在运行的 Kael —— pytest 真的对他执行了 respawn-pane -k，把人杀了。
+    在只有 tmux 的机器上才会现形，所以本机跑绿了不代表安全。
+    """
+    import shutil
+
+    config, _ = configured
+    assert "DO-NOT-CREATE" in config.tmux_target, "测试 target 必须一眼看出不能创建"
+    assert config.resume_command[0] != "claude", "测试绝不允许真的把 claude 拉起来"
+
+    session = config.tmux_target.split(":")[0]
+    if shutil.which("tmux"):
+        probe = subprocess.run(["tmux", "has-session", "-t", session], capture_output=True)
+        assert probe.returncode != 0, f"测试用的 tmux session {session} 居然真的存在，它会被杀掉"
 
 
 def write_config(path: Path, project: Path, state: Path, workdir: Path) -> Path:
@@ -23,9 +43,11 @@ def write_config(path: Path, project: Path, state: Path, workdir: Path) -> Path:
             [
                 f'project_dir = "{project}"',
                 f'state_dir = "{state}"',
-                'tmux_target = "cc:0.0"',
+                # worker 会读这个文件并自己创建真的 TmuxController。
+                # 这里填真实 target 等于让测试去杀一个活人。
+                f'tmux_target = "{SAFE_TMUX_TARGET}"',
                 f'claude_workdir = "{workdir}"',
-                'resume_command = ["claude", "--resume", "{session_id}"]',
+                'resume_command = ["/bin/false", "--resume", "{session_id}"]',
                 "dirty_budget_bytes = 4096",
                 "activation_delay_seconds = 1",
                 "healthcheck_seconds = 1",
@@ -135,10 +157,12 @@ def test_cli_read_only_commands_emit_json(configured, tmp_path):
         assert list(project.glob("*.jsonl")) == [source], f"{command} 必须只读"
         return json.loads(result.stdout)
 
-    # 本机没有 tmux，doctor 必须如实报 ok=False，而不是假装环境是好的
+    # target 指向一个不存在的 session，doctor 必须如实报 ok=False，
+    # 而不是假装环境是好的。注意不要断言 tmux_available——装了 tmux 的
+    # 机器上它是 true，这里要判的是 target 活不活。
     doctor = run("doctor")
     assert doctor["ok"] is False
-    assert doctor["tmux_available"] is False
+    assert doctor["tmux_target_alive"] is False
     assert doctor["project_dir_exists"] is True
     assert doctor["transcript_count"] == 1
 

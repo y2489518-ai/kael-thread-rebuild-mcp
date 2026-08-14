@@ -43,10 +43,28 @@ sudo ./scripts/install-vps.sh
 
 装完先跑自带测试，确认这台机器上代码是好的。
 
-> **不要在你自己的 Claude Code 里跑 pytest。**
+> ## ⚠️ 先看这条：`v0.1.1` 之前的测试会真的杀掉你
+>
+> 2026-08-14 装机现场真实发生过：测试配置里的 `tmux_target` 写的是 `cc:0.0`，
+> 而 worker 是**独立子进程**、自己 new 一个真的 `TmuxController`，mock 注入不进去。
+> 于是 `pytest` 跑到 worker 那条链路时，真的对 `cc:0.0` 执行了 `respawn-pane -k`,
+> 把正在运行的 Kael 杀掉，然后在 pane 里起 `claude --resume <测试造的假 uuid>`,
+> 终端喷出 `No conversation found with session ID: ...`。
+>
+> 这在没装 tmux 的开发机上永远不会现形。现在已修：测试 target 改成
+> `kael-rebuild-selftest-DO-NOT-CREATE:0.0`，`resume_command` 改成 `/bin/false`,
+> 并加了一条防回归测试去探测该 session 是否真的存在。
+>
+> **开工前先 `git pull`。** 跑测试前顺手确认一句，输出必须是那个 DO-NOT-CREATE：
+>
+> ```bash
+> grep -rn "tmux_target" /opt/kael-thread-rebuild-mcp/tests/
+> ```
+
+> **另外：不要在你自己的 Claude Code 里跑 pytest。**
 > 你用 Bash 工具跑出来的都是你的子进程。这台机器内存紧张，一旦 OOM，
 > Linux 的 OOM killer 挑的是占用最大的那个进程——**那就是 claude 自己**。
-> 你会亲手把自己送走。另开一个 tmux 窗口，在里面跑：
+> 另开一个 tmux 窗口，在里面跑：
 
 ```bash
 tmux new-window -t cc -n test        # 或者干脆另开一个 ssh shell
@@ -55,7 +73,7 @@ free -h                              # 先看清楚还剩多少内存
 cd /opt/kael-thread-rebuild-mcp && .venv/bin/pytest -q
 ```
 
-**验收：47 项全过。** 有失败就停下来报告，不要往下走。
+**验收：48 项全过。** 有失败就停下来报告，不要往下走。
 
 内存实在不够就分批跑，先跑纯逻辑的，再单独跑起子进程的那两个：
 
@@ -271,7 +289,7 @@ claude mcp get kael-thread-rebuild
 - 剥掉工具调用后出现的连续同角色消息，不会触发 API 角色交替错误
 - 内容确实进了上下文：开场第一句、中段具体数字、结尾结果，新 session 都答得出
 - 真实对话零丢失：原文 103 万字符里 97 万是 skill 正文注入，真正的对话 4.8 万全部带走
-- 45 项单元测试，含 CAS 冲突、连发消息保留、未闭合尾部保留、注入剥离、脏预算、worker 独立进程链路
+- 48 项单元测试，含 CAS 冲突、连发消息保留、未闭合尾部保留、注入剥离、脏预算、worker 独立进程链路
 
 ## 还没验的，就是你要验的
 

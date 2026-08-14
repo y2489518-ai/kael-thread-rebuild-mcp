@@ -8,6 +8,8 @@ from pathlib import Path
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+from conftest import SAFE_TMUX_TARGET, assistant, user, write_jsonl
+
 
 def test_real_stdio_handshake_lists_tools(configured, tmp_path: Path):
     config, project = configured
@@ -17,7 +19,7 @@ def test_real_stdio_handshake_lists_tools(configured, tmp_path: Path):
             [
                 f'project_dir = "{project}"',
                 f'state_dir = "{config.state_dir}"',
-                'tmux_target = "cc:0.0"',
+                f'tmux_target = "{SAFE_TMUX_TARGET}"',
                 f'claude_workdir = "{config.claude_workdir}"',
                 'resume_command = ["claude", "--resume", "{session_id}"]',
                 "dirty_budget_bytes = 4096",
@@ -28,8 +30,6 @@ def test_real_stdio_handshake_lists_tools(configured, tmp_path: Path):
         + "\n",
         encoding="utf-8",
     )
-
-    from conftest import assistant, user, write_jsonl
 
     source = project / "old-session.jsonl"
     write_jsonl(source, [user("我们说过的话"), assistant("我记得")])

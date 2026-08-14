@@ -8,6 +8,12 @@ import pytest
 from kael_thread_rebuild.config import RebuildConfig, encode_project_dirname
 
 
+# 测试用的 tmux target。名字刻意写成没人会去创建的样子。
+# 教训：这里原本是 "cc:0.0"，在装机的 VPS 上正好命中了正在运行的 Kael，
+# worker 测试真的对他执行了 respawn-pane -k，把人杀了。
+SAFE_TMUX_TARGET = "kael-rebuild-selftest-DO-NOT-CREATE:0.0"
+
+
 def user(text: str, session: str = "old-session", **extra) -> dict:
     return {
         "type": "user",
@@ -74,9 +80,13 @@ def configured(tmp_path: Path) -> tuple[RebuildConfig, Path]:
         {
             "project_dir": str(project),
             "state_dir": str(tmp_path / "state"),
-            "tmux_target": "cc:0.0",
+            # 绝对不能填真实存在的 target。worker 是独立子进程，它自己 new 一个
+            # 真的 TmuxController，注入不进去 —— 唯一的隔离就是让 target 指向
+            # 一个不存在的 session。填 "cc:0.0" 会让 pytest 真的把 Kael 杀掉。
+            "tmux_target": SAFE_TMUX_TARGET,
             "claude_workdir": str(workdir),
-            "resume_command": ["claude", "--resume", "{session_id}"],
+            # 双保险：万一 target 意外命中，跑起来的也只是 /bin/false，不是 claude。
+            "resume_command": ["/bin/false", "--resume", "{session_id}"],
             "dirty_budget_bytes": 4096,
             "carry_max_tokens": 0,
             "max_event_chars": 0,

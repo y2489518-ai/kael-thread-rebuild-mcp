@@ -1,13 +1,13 @@
 # 必填：Kael 当前 Claude Code 项目的 transcript 目录。
 # 先在 VPS 执行：find /root/.claude/projects -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' | sort -nr | head
-project_dir = "/root/.claude/projects/-root"
+project_dir = "/root/.claude/projects/-"
 
 # 所有 operation、备份、manifest 和 worker 日志只存在这里。
 state_dir = "/root/.local/state/kael-thread-rebuild"
 
 # 用户确认 Kael 的 tmux session 是 cc；明确到 pane，避免误杀其他 pane。
 tmux_target = "cc:0.0"
-claude_workdir = "/root"
+claude_workdir = "/"
 
 # 每个参数单独写；{session_id} 必须是独立参数。
 # 如果 Kael 平时带额外启动参数，在这里追加，不能写 shell 管道。
