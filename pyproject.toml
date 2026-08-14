@@ -1,0 +1,33 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "kael-thread-rebuild"
+version = "0.1.0"
+description = "Crash-safe Claude Code transcript carryover and tmux activation exposed through MCP"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Uki" }]
+dependencies = [
+  "mcp>=2,<3",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3,<9",
+  "pytest-cov>=6,<7",
+]
+
+[project.scripts]
+kael-thread-rebuild = "kael_thread_rebuild.cli:main"
+kael-thread-rebuild-mcp = "kael_thread_rebuild.mcp_server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/kael_thread_rebuild"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
