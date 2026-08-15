@@ -3,6 +3,7 @@ from __future__ import annotations
 from kael_thread_rebuild.transcript import (
     build_source,
     conversation_turns,
+    estimate_tokens,
     event_text,
     freeze_startup,
     human_text,
@@ -228,3 +229,44 @@ def test_sidechain_and_meta_never_enter_the_turn_stream():
     text = "\n".join(turn.text for turn in turns)
     assert "子线" not in text
     assert "元信息" not in text
+
+
+# --- token 估算：0815 实测发现 //3 是英文比例，中文少算一倍多 ---
+
+
+def test_chinese_is_not_underestimated_by_half():
+    """回归钉子：纯中文必须按 ~1 token/字 估，不许退回 //3 那个 0.33。"""
+    text = "换窗之后她说的话一个字都不能丢" * 50
+    per_char = estimate_tokens(text) / len(text)
+    assert 0.95 <= per_char <= 1.05
+
+
+def test_pure_ascii_keeps_the_old_ratio():
+    """非 CJK 仍走 /3——纯英文场景的老行为不许被这次修改动到。"""
+    assert estimate_tokens("a" * 300) == 100
+
+
+def test_same_length_chinese_costs_far_more_than_english():
+    zh = "她说的每一句都要原样搬过去" * 20
+    en = "every word she said must be carried over" * 20
+    n = min(len(zh), len(en))
+    assert estimate_tokens(zh[:n]) > estimate_tokens(en[:n]) * 2
+
+
+def test_fullwidth_punctuation_and_kana_count_as_cjk():
+    assert estimate_tokens("。" * 100) == estimate_tokens("字" * 100)
+
+
+def test_mixed_text_is_between_the_two_extremes():
+    mixed = "她说 rebuild 之后要 grow 一下" * 30
+    per_char = estimate_tokens(mixed) / len(mixed)
+    assert 1 / 3 < per_char < 1.0
+
+
+def test_turn_token_estimate_uses_the_weighted_rule():
+    """回合级估算要接上新公式，而不是各自再除以 3。"""
+    rows = [user("你还记得我们昨晚说的话吗"), assistant("每一句都记得")]
+    turns = conversation_turns(rows, 0, stamp_turns=False)
+    assert len(turns) == 1
+    raw_chars = sum(len(event_text(e)) for e in (*turns[0].users, *turns[0].assistants))
+    assert turns[0].token_estimate > raw_chars // 3

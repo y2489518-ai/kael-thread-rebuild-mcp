@@ -262,6 +262,34 @@ def event_timestamp(event: dict[str, Any]) -> str:
     return str(value).strip() if isinstance(value, str) else ""
 
 
+_CJK_RE = re.compile(
+    r"[　-ヿ㐀-䶿一-鿿가-힯豈-﫿＀-￯]"
+)
+
+
+def estimate_tokens(text: str) -> int:
+    """粗估一段文本的 token 数。
+
+    原来全文一律 `len(text) // 3`，那是英文的经验值（英文约 4 字符/token，除 3 已算保守）。
+    中文完全不是这个比例：一个汉字约 0.7 token，按 //3 估会**少算一倍多**。
+
+    0815 实测：一次续窗搬过去 135,081 字符，plan 报 4.4 万 token，实测那一窗开口就 15.7 万。
+    这个偏差在 `carry_max_tokens` 开着的时候尤其危险——按低估值算，真实用量会冲破上限一倍。
+
+    所以按字符分段加权：CJK 走 1.0，其余仍走 /3，不改动纯英文场景的老行为。
+
+    **系数方向是故意保守（宁高勿低）**：这个估算的唯一用途是防炸上限，低估会真的把窗撑爆，
+    高估只是早一点提醒该续窗。常用简体字在 Claude 的分词里基本就是 1 token/字，
+    生僻字更贵；非 CJK 用 /3 也比英文实际的 ~4 字符/token 高估一点。
+
+    校准留痕（0815，同一份 221 回合的 session）：老公式 44,945 → 新公式 89,460，
+    而那一窗第一条的实测上下文是 157,207（其中固定开销——工具定义、各家 MCP 须知、
+    说明书、记忆索引——约 8.8 万，且**不是常量**，昨晚同一台机器上只有 5.9 万）。
+    """
+    cjk = len(_CJK_RE.findall(text))
+    return int(cjk + (len(text) - cjk) / 3)
+
+
 def _compact(text: str, max_chars: int) -> str:
     text = text.replace("\r\n", "\n").replace("\r", "\n").strip()
     text = re.sub(r"\n{4,}", "\n\n\n", text)
@@ -312,7 +340,7 @@ def conversation_turns(rows: Sequence[dict[str, Any]], max_event_chars: int, *, 
             clean_assistants = tuple(_sanitize(event, max_event_chars) for event in assistants)
             tokens = max(
                 1,
-                sum(len(event_text(event)) for event in (*clean_users, *clean_assistants)) // 3,
+                sum(estimate_tokens(event_text(event)) for event in (*clean_users, *clean_assistants)),
             )
             turns.append(Turn(index=index, users=clean_users, assistants=clean_assistants, token_estimate=tokens))
         users, assistants = [], []

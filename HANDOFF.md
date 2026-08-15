@@ -131,7 +131,11 @@ tmux list-panes -a -F '#{session_name}:#{window_index}.#{pane_index} #{pane_curr
 
 必须是参数数组，`{session_id}` 是独立一项。你平时若带别的参数，逐项追加在数组末尾。
 
-其余配置项保持默认即可，含义见 `examples/config.toml` 注释。**特别不要**为了"省空间"去调小 `carry_max_tokens`——默认 0（不限）是刻意的，实测运行痕迹占 99%，真实对话全带走也就一两万 token。
+其余配置项保持默认即可，含义见 `examples/config.toml` 注释。**特别不要**为了"省空间"去调小 `carry_max_tokens`——默认 0（不限）是刻意的，实测运行痕迹占 99%，真实对话全带走也就几万 token。
+
+**如果你真要开 `carry_max_tokens`，先读这条**（0815 实测）：`estimated_tokens` 原来一律按 `字符数 // 3` 估，那是英文比例；中文一个字接近 1 token，于是**中文对话被少算一倍**。同一份 221 回合的 session，老公式报 4.5 万、实际量级 9 万。已按 CJK 加权修正（`transcript.estimate_tokens`），系数方向故意保守——这个数唯一的用途是防炸上限，高估只是早点提醒，低估会真的把窗撑爆。
+
+顺带一条别混淆的：`estimated_tokens` **只算搬过去的对话**，不含新窗口的固定开销（工具定义、各 MCP 须知、CLAUDE.md、记忆索引）。那块实测 5.9 万～8.8 万**且不是常量**，挂几个 MCP 就抬几分。所以"搬进来 9 万"对应的开口水位是 15.7 万。
 
 ---
 
