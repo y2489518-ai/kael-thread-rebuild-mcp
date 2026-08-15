@@ -133,9 +133,11 @@ tmux list-panes -a -F '#{session_name}:#{window_index}.#{pane_index} #{pane_curr
 
 其余配置项保持默认即可，含义见 `examples/config.toml` 注释。**特别不要**为了"省空间"去调小 `carry_max_tokens`——默认 0（不限）是刻意的，实测运行痕迹占 99%，真实对话全带走也就几万 token。
 
-**如果你真要开 `carry_max_tokens`，先读这条**（0815 实测）：`estimated_tokens` 原来一律按 `字符数 // 3` 估，那是英文比例；中文一个字接近 1 token，于是**中文对话被少算一倍**。同一份 221 回合的 session，老公式报 4.5 万、实际量级 9 万。已按 CJK 加权修正（`transcript.estimate_tokens`），系数方向故意保守——这个数唯一的用途是防炸上限，高估只是早点提醒，低估会真的把窗撑爆。
+**如果你真要开 `carry_max_tokens`，先读这条**（0815）：`estimated_tokens` 原来一律按 `字符数 // 3` 估，那是英文散文比例。真实文本两头都不符——中文一个字要一个多 token，非中文那部分也不是散文而是标点/路径/代码。同一份 221 回合的 session，老公式报 4.5 万，真实量级 11.9 万。现在按 `CJK ×1.1、其余 ÷1.5` 估（`transcript.estimate_tokens`），**系数是拿 Claude Code `/context` 的官方读数反解的**，方向故意留在高估一侧——这个数唯一的用途是防炸上限。
 
-顺带一条别混淆的：`estimated_tokens` **只算搬过去的对话**，不含新窗口的固定开销（工具定义、各 MCP 须知、CLAUDE.md、记忆索引）。那块实测 5.9 万～8.8 万**且不是常量**，挂几个 MCP 就抬几分。所以"搬进来 9 万"对应的开口水位是 15.7 万。
+**校准方法留给下一个人**（别再自己验自己）：`/context` 会报出 memory files 等常驻项的官方 token 数，用它反解系数；再用「某次续窗第一条的实测上下文 − `/context` 报的固定开销」去对本工具的估算值。0815 那次对账差 1.0%。
+
+顺带一条别混淆的：`estimated_tokens` **只算搬过去的对话**，不含新窗口的固定开销。那块官方读数是 **36.8k**（system prompt 3.7k + 内置工具 21.8k + MCP 常驻 2k + 记忆文件 6.8k + skills 2.5k）。注意 MCP 工具走目录制，139 个在册只占 2k——**指望砍 MCP 来瘦身是白忙**。
 
 ---
 

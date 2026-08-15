@@ -234,23 +234,35 @@ def test_sidechain_and_meta_never_enter_the_turn_stream():
 # --- token 估算：0815 实测发现 //3 是英文比例，中文少算一倍多 ---
 
 
+def test_matches_the_official_context_readout():
+    """外部基准回归钉子：拿 Claude Code `/context` 的官方读数校准（0815）。
+
+    两个样本都是常驻文件，官方给出确定的 token 数——这是唯一不由本函数自己产生的基准。
+    误差放到 ±12%，但**方向必须是高估**（防炸上限宁高勿低）。
+    """
+    for cjk_n, other_n, official in ((2035, 2183, 3600), (1154, 3184, 3200)):
+        got = estimate_tokens("字" * cjk_n + "a" * other_n)
+        assert official * 0.9 <= got <= official * 1.12, (cjk_n, other_n, official, got)
+        assert got >= official * 0.98, "宁可高估：不许掉到官方读数以下"
+
+
 def test_chinese_is_not_underestimated_by_half():
-    """回归钉子：纯中文必须按 ~1 token/字 估，不许退回 //3 那个 0.33。"""
+    """纯中文必须按 ~1.1 token/字 估，不许退回 //3 那个 0.33。"""
     text = "换窗之后她说的话一个字都不能丢" * 50
     per_char = estimate_tokens(text) / len(text)
-    assert 0.95 <= per_char <= 1.05
+    assert 1.05 <= per_char <= 1.15
 
 
-def test_pure_ascii_keeps_the_old_ratio():
-    """非 CJK 仍走 /3——纯英文场景的老行为不许被这次修改动到。"""
-    assert estimate_tokens("a" * 300) == 100
+def test_non_cjk_is_denser_than_english_prose():
+    """非 CJK 走 /1.5 而不是 /3：真实文本里那部分是标点、路径、代码，不是英文散文。"""
+    assert estimate_tokens("a" * 300) == 200
 
 
-def test_same_length_chinese_costs_far_more_than_english():
+def test_same_length_chinese_still_costs_more_than_ascii():
     zh = "她说的每一句都要原样搬过去" * 20
     en = "every word she said must be carried over" * 20
     n = min(len(zh), len(en))
-    assert estimate_tokens(zh[:n]) > estimate_tokens(en[:n]) * 2
+    assert estimate_tokens(zh[:n]) > estimate_tokens(en[:n]) * 1.5
 
 
 def test_fullwidth_punctuation_and_kana_count_as_cjk():
@@ -260,7 +272,7 @@ def test_fullwidth_punctuation_and_kana_count_as_cjk():
 def test_mixed_text_is_between_the_two_extremes():
     mixed = "她说 rebuild 之后要 grow 一下" * 30
     per_char = estimate_tokens(mixed) / len(mixed)
-    assert 1 / 3 < per_char < 1.0
+    assert 1 / 1.5 < per_char < 1.1
 
 
 def test_turn_token_estimate_uses_the_weighted_rule():
