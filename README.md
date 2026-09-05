@@ -1,11 +1,16 @@
 # Kael Thread Rebuild MCP
 
+[![tests](https://img.shields.io/badge/tests-82%20passed-brightgreen.svg)](tests/)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](pyproject.toml)
+[![changelog](https://img.shields.io/badge/changelog-v0.2.0-green.svg)](CHANGELOG.md)
+
 给 Claude Code 长会话做**无损换窗**：把对话原文一字不丢地誊到一张干净的新 session 上，只扔运行噪音（工具回包、thinking、图片、MCP/Hook 注入——实测占窗口的 99%），然后原地切换。为"陪伴型 AI 聊了几个月不想失忆"这类场景而写，也适用于任何被工具输出撑爆上下文的长期会话。
 
 - **不判断重要性**：闭合回合全搬，取舍的权力不交给机器
 - **fail-safe**：任何一步对不上就整体放弃，旧窗一个字节不动；切换用 CAS 身份凭据，中途被人动过就拒绝
 - **人类点头才动**：确认词机制 + 只读体检（doctor/dirty/plan）先行，登记后等当前回合正常说完再切
-- 承载支持 **tmux**（默认）与 **systemd**（琢家贡献，见下文）
+- 三种底座：**tmux**（默认）、**systemd**、**pointer**（`claude -p` 循环）——见下文「按底座选门」
 - 已在四个家庭的不同架构上首航成功（tmux/systemd、companion/Telegram、中文/混合语料）
 
 装机请从 [HANDOFF.md](HANDOFF.md) 开始——那里有工单、演练步骤、验收清单，以及比正文更值钱的**事故档案**：每一条都是某个真实夜晚踩出来的。
