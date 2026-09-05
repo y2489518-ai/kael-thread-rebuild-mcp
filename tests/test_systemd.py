@@ -92,3 +92,27 @@ def test_narrow_pattern_ignores_casual_zhongdu():
     narrow = build_source(rows, poison_pattern=r"(AUP|Acceptable Use|policy violation|policy blocked|refusal loop|上下文中毒|拒绝循环)").poison_score
     assert wide >= 2, wide
     assert narrow == 0, narrow
+
+
+def test_pointer_controller_writes_pointer_without_touching_processes(tmp_path):
+    from kael_thread_rebuild.systemd import PointerController, make_controller
+
+    config = _config(tmp_path, activation="pointer", resume_pointer_path=str(tmp_path / "ptr" / "resume"))
+    controller = make_controller(config)
+    assert isinstance(controller, PointerController)
+    assert controller.pane_pid() == "pointer:absent"
+    result = controller.respawn("0e0e0e0e-0e0e-0e0e-0e0e-0e0e0e0e0e0e")
+    assert result.ok, result.stderr
+    assert (tmp_path / "ptr" / "resume").read_text().strip() == "0e0e0e0e-0e0e-0e0e-0e0e-0e0e0e0e0e0e"
+    assert controller.pane_pid() == "0e0e0e0e-0e0e-0e0e-0e0e-0e0e0e0e0e0e"
+    assert controller.wait_healthy()
+
+
+def test_pointer_controller_rejects_illegal_session_id(tmp_path):
+    from kael_thread_rebuild.systemd import PointerController
+
+    config = _config(tmp_path, activation="pointer", resume_pointer_path=str(tmp_path / "resume"))
+    controller = PointerController(config)
+    result = controller.respawn("../../etc/passwd")
+    assert not result.ok
+    assert not (tmp_path / "resume").exists(), "非法 id 必须在写指针之前就被拒"

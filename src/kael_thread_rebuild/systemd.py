@@ -116,10 +116,54 @@ class SystemdController:
         return True
 
 
+class PointerController(SystemdController):
+    """`claude -p` 循环家的激活方式：只写指针，不杀任何进程。
+
+    有的家没有常驻 claude——runner 循环调 `claude -p --resume <id>`，每次
+    调用都是一次性的进程。这种架构里"换窗"不需要 respawn 任何东西：把洗
+    好的新 session_id 原子写进指针文件，runner 下一圈自己带上它就完成了。
+    worker 的触发也不走 Stop hook，由 runner 在两次调用之间跑
+    `kael-thread-rebuild hook-stop`（喂同样的 JSON）即可。
+
+    身份凭据（对应 pane_pid 的 CAS）用指针文件当时的内容：prepare 记下、
+    activate 前再核，中间被别人改过指针就拒绝——和 tmux/systemd 版同一个
+    语义：证明"现场还是我准备时那个现场"。activate 与 runner 的下一次
+    调用之间天然存在缝，靠已有的"活跃 transcript 冲突"检查兜底。
+    """
+
+    def target_alive(self) -> bool:
+        # 没有常驻进程可查活；指针目录可写就算现场存在。
+        return self.pointer.parent.exists() or not self.pointer.is_absolute()
+
+    def pane_pid(self) -> str:
+        try:
+            return self.pointer.read_text(encoding="utf-8").strip() or "pointer:empty"
+        except OSError:
+            return "pointer:absent"
+
+    def pane_command(self) -> str:
+        return f"pointer:{self.pointer}"
+
+    def respawn(self, session_id: str) -> CommandResult:
+        try:
+            self.config.resume_argv(session_id)
+        except ValueError as exc:
+            return CommandResult(False, ["respawn", session_id], "", str(exc))
+        return self._write_pointer(session_id)
+
+    def wait_healthy(self) -> bool:
+        try:
+            return bool(self.pointer.read_text(encoding="utf-8").strip())
+        except OSError:
+            return False
+
+
 def make_controller(config: RebuildConfig):
     """按 config.activation 选实现。默认 tmux，保持上游行为不变。"""
     if config.activation == "systemd":
         return SystemdController(config)
+    if config.activation == "pointer":
+        return PointerController(config)
     from .tmux import TmuxController
 
     return TmuxController(config)

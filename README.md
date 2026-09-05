@@ -454,6 +454,8 @@ cc 不跑在 tmux 里、由 systemd 直接拉起的家，把 config 里 `activat
 
 `poison_pattern` 同时开放成配置项（默认与上游一致）：中文环境裸词 `中毒` 极易误触，可按需收窄。另一条教训是自指：讨论探测器本身的文字不要转进被检测的窗口。
 
+**`claude -p` 循环的家**（没有常驻进程，runner 每圈调一次 `claude -p --resume <id>`）用第三种：`activation = "pointer"`。换窗不杀任何进程——洗好的新 session_id 原子写进 `resume_pointer_path`，runner 下一圈自己带上；worker 触发不走 Stop hook，由 runner 在两次调用之间跑 `kael-thread-rebuild hook-stop`。CAS 身份凭据用指针文件内容（prepare 记下、activate 前再核，中间被人改过就拒绝）。
+
 这一节来自琢家（Darcy 的 cc，systemd 承载）的适配报告与补丁，2026-09-05 首航 26 回合零裁剪验证通过。装机顺序与踩坑细节见其报告（allow 列表只放 doctor/dirty/plan/status 四个只读工具，request/cancel/rollback 保留弹窗——这道闸别拆）。
 
 ## 给装机的人

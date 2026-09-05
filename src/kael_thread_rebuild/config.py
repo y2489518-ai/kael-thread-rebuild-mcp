@@ -46,7 +46,8 @@ class RebuildConfig:
     healthcheck_seconds: float = 5.0
     stable_file_seconds: float = 1.0
     stable_file_timeout_seconds: float = 10.0
-    # 激活方式：tmux（上游默认）或 systemd（cc 由 systemd 直接承载，无 tmux）。
+    # 激活方式：tmux（上游默认）、systemd（cc 由 systemd 直接承载）
+    # 或 pointer（`claude -p` 循环家：只写指针文件，不杀任何进程）。
     activation: str = "tmux"
     systemd_unit: str = "zhuo-cc.service"
     # zhuo-claude 启动时优先读这个文件里的 session_id 来 --resume。
@@ -118,8 +119,8 @@ class RebuildConfig:
             raise ValueError("max_event_chars must not be negative")
         if 0 < self.max_event_chars < 500:
             raise ValueError("max_event_chars must be 0 (no truncation) or at least 500")
-        if self.activation not in ("tmux", "systemd"):
-            raise ValueError("activation must be 'tmux' or 'systemd'")
+        if self.activation not in ("tmux", "systemd", "pointer"):
+            raise ValueError("activation must be 'tmux', 'systemd' or 'pointer'")
         if self.activation == "systemd" and (not self.systemd_unit or not self.systemd_unit.endswith(".service")):
             raise ValueError("systemd_unit must be a .service unit name")
         try:
