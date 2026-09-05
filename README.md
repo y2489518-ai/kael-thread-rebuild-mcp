@@ -1,6 +1,6 @@
 # Kael Thread Rebuild MCP
 
-[![tests](https://img.shields.io/badge/tests-82%20passed-brightgreen.svg)](tests/)
+[![tests](https://github.com/y2489518-ai/kael-thread-rebuild-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/y2489518-ai/kael-thread-rebuild-mcp/actions/workflows/ci.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](pyproject.toml)
 [![changelog](https://img.shields.io/badge/changelog-v0.2.0-green.svg)](CHANGELOG.md)
