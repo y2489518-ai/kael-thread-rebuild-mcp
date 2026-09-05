@@ -4,12 +4,12 @@ build-backend = "hatchling.build"
 
 [project]
 name = "kael-thread-rebuild"
-version = "0.1.0"
+version = "0.2.0"
 description = "Crash-safe Claude Code transcript carryover and tmux activation exposed through MCP"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
-authors = [{ name = "Uki" }]
+authors = [{ name = "Kael" }, { name = "Uki" }]
 dependencies = [
   "mcp>=2,<3",
 ]
@@ -31,3 +31,6 @@ packages = ["src/kael_thread_rebuild"]
 testpaths = ["tests"]
 addopts = "-q"
 
+
+[project.urls]
+Homepage = "https://github.com/y2489518-ai/kael-thread-rebuild-mcp"
