@@ -89,6 +89,8 @@ class SelectionResult:
     estimated_tokens: int
     poison_score: int
     startup_frozen: bool
+    overflow_blocked: bool = False
+    overflow_tokens: int = 0
 
     def stats(self) -> dict[str, int | bool]:
         return {
@@ -99,6 +101,8 @@ class SelectionResult:
             "estimated_tokens": self.estimated_tokens,
             "poison_score": self.poison_score,
             "startup_frozen": self.startup_frozen,
+            "overflow_blocked": self.overflow_blocked,
+            "overflow_tokens": self.overflow_tokens,
         }
 
 
@@ -412,12 +416,16 @@ def build_source(
     freeze_startup_snapshot: bool = True,
     stamp_turns: bool = True,
     poison_pattern: str | None = None,
+    carry_overflow: str = "drop_oldest",
 ) -> SelectionResult:
     """构造新 thread 的注入源。
 
     这里刻意**不判断哪段经历重要**：闭合的真实对话全部带走，只把运行痕迹
     留在旧 transcript 里。体积由 dirty ledger 的触发时机来控，不由内容打分来控。
-    `carry_max_tokens` 只是防炸的硬上限，超了从最老的整轮开始丢，并如实计数。
+    `carry_max_tokens` 只是防炸的硬上限。超了怎么办由 `carry_overflow` 定：
+    - "drop_oldest"（上游默认）：从最老的整轮开始丢，并如实计数；
+    - "block"（沈渊家 0905 提的路线）：一轮都不丢，把结果标成 overflow_blocked，
+      让上层拒绝换窗、把选择权还给人——话是谁的谁做主。
     """
     turns = conversation_turns(rows, max_event_chars, stamp_turns=stamp_turns)
     poison_re = re.compile(poison_pattern, re.I) if poison_pattern else POISON_RE
@@ -427,12 +435,18 @@ def build_source(
     selected = [turn for turn in turns if turn.closed or (include_open_tail and turn.index == len(turns) - 1)]
 
     dropped = 0
+    overflow_blocked = False
+    overflow_tokens = 0
     if carry_max_tokens > 0:
         total = sum(turn.token_estimate for turn in selected)
-        while len(selected) > 1 and total > carry_max_tokens:
-            total -= selected[0].token_estimate
-            selected.pop(0)
-            dropped += 1
+        if total > carry_max_tokens and carry_overflow == "block":
+            overflow_blocked = True
+            overflow_tokens = total - carry_max_tokens
+        else:
+            while len(selected) > 1 and total > carry_max_tokens:
+                total -= selected[0].token_estimate
+                selected.pop(0)
+                dropped += 1
 
     startup_events: list[dict[str, Any]] = []
     if snapshot is not None:
@@ -488,6 +502,8 @@ def build_source(
         estimated_tokens=sum(turn.token_estimate for turn in selected),
         poison_score=poison_score,
         startup_frozen=snapshot is not None,
+        overflow_blocked=overflow_blocked,
+        overflow_tokens=overflow_tokens,
     )
 
 

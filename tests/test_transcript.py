@@ -181,6 +181,21 @@ def test_hard_cap_drops_oldest_turns_and_counts_them():
     assert "问题 9" in text, "硬上限只从最老的丢，最近的必须留"
 
 
+def test_carry_overflow_block_keeps_every_turn_and_flags():
+    """沈渊家路线：超限不丢，标 overflow_blocked，让人挑。"""
+    rows = []
+    for index in range(10):
+        rows.append(user(f"问题 {index} " + "字" * 4000))
+        rows.append(assistant(f"回答 {index} " + "字" * 4000))
+    result = build_source(rows, carry_max_tokens=5000, carry_overflow="block")
+    assert result.overflow_blocked
+    assert result.overflow_tokens > 0
+    assert result.dropped_oldest_turns == 0
+    assert result.selected_turns == 10, "block 模式一轮都不能丢"
+    under = build_source(rows, carry_max_tokens=0, carry_overflow="block")
+    assert not under.overflow_blocked, "没超限时 block 模式不拦"
+
+
 def test_turn_carries_timestamp_prefix():
     result = build_source([user("带时间的话", timestamp="2026-08-14T21:30:00Z"), assistant("好")])
     assert "[发生时间: 2026-08-14T21:30:00Z]" in joined(result)

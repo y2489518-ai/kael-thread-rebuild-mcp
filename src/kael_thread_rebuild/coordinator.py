@@ -86,6 +86,7 @@ class RebuildCoordinator:
             freeze_startup_snapshot=self.config.freeze_startup_snapshot,
             stamp_turns=self.config.stamp_turns,
             poison_pattern=self.config.poison_pattern,
+            carry_overflow=self.config.carry_overflow,
         )
 
     def _pane_identity(self) -> str:
@@ -169,14 +170,23 @@ class RebuildCoordinator:
             dirty_budget_bytes=self.config.dirty_budget_bytes,
             rebuild_on_original_image_view=self.config.rebuild_on_original_image_view,
         )
+        blocked_reason = ""
+        if result.poison_score >= 2:
+            blocked_reason = "possible poisoned recent context"
+        elif result.overflow_blocked:
+            blocked_reason = (
+                f"carry would exceed carry_max_tokens by ~{result.overflow_tokens} tokens; "
+                "carry_overflow=block keeps every turn and leaves the choice to a human "
+                "(raise carry_max_tokens, or switch carry_overflow to drop_oldest)"
+            )
         return {
-            "ok": bool(result.events) and result.poison_score < 2,
+            "ok": bool(result.events) and not blocked_reason,
             "source_path": str(source),
             "source_sha256": file_digest(source),
             "source_session_id": session_id_from_events(rows),
             "stats": result.stats(),
             "dirty": report,
-            "blocked_reason": "possible poisoned recent context" if result.poison_score >= 2 else "",
+            "blocked_reason": blocked_reason,
             "note": "read-only; no transcript or tmux state was changed",
         }
 
@@ -274,6 +284,11 @@ class RebuildCoordinator:
             result = self._build(source_events)
             if result.poison_score >= 2:
                 raise RebuildError("recent context looks poisoned; clean rebuild from durable memory is required")
+            if result.overflow_blocked:
+                raise RebuildError(
+                    f"carry would exceed carry_max_tokens by ~{result.overflow_tokens} tokens and "
+                    "carry_overflow=block refuses to drop turns; a human must raise the limit or choose"
+                )
             if not result.events:
                 raise RebuildError("no real user/assistant turns were found in the source transcript")
 

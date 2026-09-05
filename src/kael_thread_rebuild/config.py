@@ -56,6 +56,9 @@ class RebuildConfig:
     # 毒上下文探测正则（最近 10 轮命中 >=2 次即拒绝换窗）。默认与上游一致；
     # 中文环境建议收窄，避免日常词「中毒」和讨论本工具时的自指误触。
     poison_pattern: str = r"(AUP|Acceptable Use|policy violation|policy blocked|refusal loop|毒上下文|中毒|拒绝循环)"
+    # carry_max_tokens 超限时怎么办："drop_oldest"=丢最老整轮并计数（上游默认）；
+    # "block"=一轮不丢、拒绝换窗，把挑选权还给人（沈渊家 0905 路线）。
+    carry_overflow: str = "drop_oldest"
 
     @classmethod
     def load(cls, path: str | Path | None = None) -> "RebuildConfig":
@@ -97,6 +100,7 @@ class RebuildConfig:
             resume_pointer_path=str(raw.get("resume_pointer_path", "/etc/zhuo/resume_session")).strip(),
             systemd_restart_timeout_seconds=float(raw.get("systemd_restart_timeout_seconds", 180.0)),
             poison_pattern=str(raw.get("poison_pattern", r"(AUP|Acceptable Use|policy violation|policy blocked|refusal loop|毒上下文|中毒|拒绝循环)")),
+            carry_overflow=str(raw.get("carry_overflow", "drop_oldest")).strip(),
         )
         config.validate()
         return config
@@ -122,6 +126,8 @@ class RebuildConfig:
             __import__("re").compile(self.poison_pattern, __import__("re").I)
         except __import__("re").error as exc:
             raise ValueError(f"poison_pattern is not a valid regex: {exc}")
+        if self.carry_overflow not in ("drop_oldest", "block"):
+            raise ValueError("carry_overflow must be drop_oldest or block")
         if self.systemd_restart_timeout_seconds < 10:
             raise ValueError("systemd_restart_timeout_seconds must be at least 10")
         if self.activation_delay_seconds < 1:
