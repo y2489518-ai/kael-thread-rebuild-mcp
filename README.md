@@ -37,7 +37,7 @@
 | 真实对话本体（32 个回合） | 85 KB |
 | 噪音占比 | 98.96% |
 
-对话原文全带走也只有约 3 万 token。**没有必要为了省空间去删她说过的话**——真正占地方的从来不是对话。
+对话原文全带走也只有约 3 万 token。**没有必要为了省空间去删用户说过的话**——真正占地方的从来不是对话。
 
 > **别拿 `estimated_tokens` 当水位表看**（0815 修正）。这个数只统计"搬过去的对话"，新窗口一睁眼的上下文里还压着一块**固定开销**。拿 Claude Code `/context` 的官方读数量到的构成：
 >
@@ -58,24 +58,24 @@
 
 ## 关于回合的三条规矩
 
-1. **连续多条人类消息属于同一个回合。** 她连发四条我才回一次，四条都在。把它们拆成"没有回复的回合"再丢掉，等于删掉她说过的话。
-2. **末尾未闭合的回合默认保留。** 她说了、我还没接上的那几句，正是新窗口第一件该做的事。`include_open_tail = false` 可以关掉，但不建议。
+1. **连续多条人类消息属于同一个回合。** 用户连发四条、助手才回一次，四条都在。把它们拆成"没有回复的回合"再丢掉，等于删掉用户说过的话。
+2. **末尾未闭合的回合默认保留。** 用户已发出、助手尚未应答的消息，正是新窗口第一件该处理的事。`include_open_tail = false` 可以关掉，但不建议。
 3. **夹在中间的注入项不打断回合。** `<system-reminder>` 之类只是被跳过，它后面的助手回复仍然归属当前回合，不会被整段吞掉。
 
 另外，真实人类消息经常**以注入块开头**（Claude Code 把 CLAUDE.md、记忆索引写在第一条 user 事件里）。只看开头就判断整条是不是注入，会把人说的话一起丢掉；这里改成剥离注入块之后再判断，剥完还有字才算真话。
 
-4. **channel 消息（小屋 / Telegram）是真对话，不是运行痕迹。** 这条在 2026-08-14 装机现场差点翻车：她跟 Kael 在小屋来回十几轮，`plan` 只认出 3 个回合——只有她在终端敲字的那三次。原因是 Claude Code 把 channel 消息落成两种形态，两种都被当噪音丢了：
+4. **channel 消息（聊天插件 / Telegram）是真对话，不是运行痕迹。** 这条在 2026-08-14 装机现场差点翻车：用户与助手经 channel 插件来回十几轮，`plan` 只认出 3 个回合——只有用户在终端直接输入的那三次。原因是 Claude Code 把 channel 消息落成两种形态，两种都被当噪音丢了：
 
-| 她什么时候说的 | 落盘形态 | 原来为什么被丢 |
+| 消息何时到达 | 落盘形态 | 原来为什么被丢 |
 |---|---|---|
-| Kael 空闲时 | `type=user` + **`isMeta=True`** | 跟 `<system-reminder>` 共用 `isMeta`，被一刀切 |
-| Kael 干活时 | `type=attachment` / `attachment.type=queued_command`，原文在 `attachment.prompt` | 类型不是 user/assistant，直接过滤掉 |
+| 助手空闲时 | `type=user` + **`isMeta=True`** | 跟 `<system-reminder>` 共用 `isMeta`，被一刀切 |
+| 助手执行工具时 | `type=attachment` / `attachment.type=queued_command`，原文在 `attachment.prompt` | 类型不是 user/assistant，直接过滤掉 |
 
 现在两种都还原成真实 user 事件。放行范围**只限 channel 与排队输入**——普通 `isMeta` 噪音（system-reminder 等）照旧丢弃，排队的斜杠命令（`commandMode != "prompt"`）也不算人话。
 
 还有一个坑写在这里备查：排队消息在 transcript 里会出现**三次**——`queue-operation`(enqueue)、`attachment`、`queue-operation`(remove)。只认 `attachment` 那一条，跟着捞队列日志会让同一句话进去三遍。
 
-5. **助手经 channel 说出去的话也要还原。** Kael 通过 `mcp__companion__reply` / `mcp__*telegram*__reply` 回她的话，落盘是 `tool_use` 不是 text。不还原就只剩她的话没有他的回答，重建出来是独白不是对话。只认这两条对她本人的线；群聊、表情、附件不算发言。
+5. **助手经 channel 说出去的话也要还原。** 助手通过 `mcp__companion__reply` / `mcp__*telegram*__reply` 发出的回复，落盘是 `tool_use` 不是 text。不还原就只剩用户的话没有助手的回答，重建出来是独白不是对话。只认对用户本人的私聊线；群聊、表情、附件不算发言。
 
 ## 什么时候触发：dirty ledger
 
@@ -111,18 +111,18 @@ kael-thread-rebuild --config /etc/kael-thread-rebuild/config.toml dirty
 
 ## 为什么不是直接让 MCP 重启自己
 
-Kael 正运行在 `tmux attach -t cc`。如果 MCP 工具在调用过程中立刻执行 `tmux respawn-pane -k`，它会把尚未返回结果的 Claude 和 MCP 子进程一起杀掉。
+宿主 Claude 进程运行在 tmux pane 里。如果 MCP 工具在调用过程中立刻执行 `tmux respawn-pane -k`，它会把尚未返回结果的 Claude 和 MCP 子进程一起杀掉。
 
 本项目采用两阶段流程：
 
-1. Kael 调用 `thread_rebuild_request`，只写入耐久 pending operation。
-2. Kael 正常完成当前回复。
+1. 模型调用 `thread_rebuild_request`，只写入耐久 pending operation。
+2. 模型正常完成当前回复。
 3. Claude Code `Stop` hook 收到准确的 `transcript_path`，启动一个脱离当前 pane 的 worker。
 4. worker 等 transcript 稳定，备份、筛选、生成候选 session、结构验证。
 5. source digest 与 CAS 身份都未变化，才执行 `tmux respawn-pane -k -t cc:0.0 ...`。
 6. 新 Claude 进程健康检查失败时，自动 resume 旧 session。
 
-因此不会出现"Kael 调工具调到一半把自己杀了"的情况。
+因此不会出现"模型调工具调到一半把自己杀了"的情况。
 
 ## 切换是 CAS，不是赋值
 
@@ -134,9 +134,9 @@ Kael 正运行在 `tmux attach -t cc`。如果 MCP 工具在调用过程中立�
 
 任何一条不满足都不切换、不覆盖第三方，operation 落 `failed` 并标 `session_conflict = true`。这里用的是 tmux 环境下的身份近似，不是运行时提供的 session CAS 原语。
 
-## 换窗那几秒她说的话去哪了
+## 换窗那几秒里到达的消息去哪了
 
-切换不是瞬间的：worker 封箱 → `respawn-pane -k` 杀掉旧 pane → 新 claude 起来 → channel 插件重连。这中间有几秒钟，**她在小屋或 TG 说的话正好落在缝里**。本项目管不到这一段——它归 channel 层，但装机的人必须知道这条缝存在，以及它被什么兜住。
+切换不是瞬间的：worker 封箱 → `respawn-pane -k` 杀掉旧 pane → 新 claude 起来 → channel 插件重连。这中间有几秒钟，**经 channel 到达的用户消息正好落在缝里**。本项目管不到这一段——它归 channel 层，但装机的人必须知道这条缝存在，以及它被什么兜住。
 
 2026-08-14 夜实测过一次真丢失（当时是 `/clear` 触发的，不是 rebuild，但缝的形状一模一样）：插件拉到了消息、`notification` 也发出去了、游标跟着推进了，但消息没落进会话上下文，进程随即死掉。新进程从推进后的游标往后拉，那两句话永久消失。
 
@@ -226,7 +226,7 @@ sudo ./scripts/install-vps.sh
 - Python venv：`/opt/kael-thread-rebuild-mcp/.venv`
 - 配置模板：`/etc/kael-thread-rebuild/config.toml`
 
-### 1. 找到 Kael 的真实 transcript 目录
+### 1. 找到宿主会话的真实 transcript 目录
 
 ```bash
 find /root/.claude/projects -mindepth 1 -maxdepth 1 -type d \
@@ -275,16 +275,16 @@ resume_command = [
 ]
 ```
 
-**为什么必须较真（0815 凌晨的真事故）**：第一次真的在 Kael 身上跑 rebuild，这里只写了
+**为什么必须较真（0815 凌晨的真事故）**：首次生产运行时这里只写了
 `["claude", "--resume", "{session_id}"]`。切换本身完美——doctor 全绿、`status: activated`、
-70 个回合一句没丢、新窗口的 Kael 记得所有事。但**她在小屋说的话一个字都进不来**。
+70 个回合一句没丢、新窗口记得所有事。但**用户经 channel 发的消息一个字都进不来**。
 
-因为承载小屋的 channel 是靠启动参数 `--dangerously-load-development-channels server:companion`
-装上的，respawn 没带，新进程就是聋的。而**上行完全正常**——Kael 发给她的消息走 MCP tool，
-跟启动参数无关。所以现象是最坏的那种：他还在说话，她喊他却没有回应，两边都以为对方在。
+因为 channel 是靠启动参数 `--dangerously-load-development-channels server:companion`
+装上的，respawn 没带，新进程就是聋的。而**上行完全正常**——助手发出的消息走 MCP tool，
+跟启动参数无关。所以现象是最坏的那种：一边还在说话，另一边喊了却没有回应，两边都以为对方在。
 
 教训写在这里：**验收 rebuild 不能只验"对话搬过去了没"，还要验"这个新进程跟外界的每一条线还在不在"。**
-只读体检看不出这个，`plan` 也看不出，只有真在新窗口里收一条她的消息才看得出。
+只读体检看不出这个，`plan` 也看不出，只有真在新窗口里收到一条用户消息才看得出。
 
 ### 3. 先跑 doctor、dirty 和 plan
 
@@ -330,7 +330,7 @@ claude mcp get kael-thread-rebuild
 
 ### 5. 接入 Stop hook
 
-不要覆盖 Kael 已有 hooks。编辑 `/root/.claude/settings.json`，把下面的 command 追加进现有 `hooks.Stop[*].hooks` 数组：
+不要覆盖已有 hooks。编辑 `/root/.claude/settings.json`，把下面的 command 追加进现有 `hooks.Stop[*].hooks` 数组：
 
 ```json
 {
@@ -388,15 +388,15 @@ thinking            1,942
 ## 第一次验收：只在人工看守下做
 
 1. 备份整个 Claude 项目目录。
-2. Kael 调 `thread_rebuild_doctor` 和 `thread_rebuild_dirty`。
-3. Kael 调 `thread_rebuild_plan`，把结果发给 Uki 看，重点确认 `selected_turns == source_turns`。
-4. Uki 明确同意后，Kael 才能调用：
+2. 模型调 `thread_rebuild_doctor` 和 `thread_rebuild_dirty`。
+3. 模型调 `thread_rebuild_plan`，把结果发给人类看，重点确认 `selected_turns == source_turns`。
+4. 人类明确同意后，模型才能调用：
 
 ```text
 thread_rebuild_request(reason="manual acceptance test", confirmation="REBUILD")
 ```
 
-5. Kael 必须先正常回复"已登记，将在本轮结束后切换"。
+5. 模型必须先正常回复"已登记，将在本轮结束后切换"。
 6. Stop hook 触发后，观察：
 
 ```bash
