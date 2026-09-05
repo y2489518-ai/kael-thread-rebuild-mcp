@@ -411,6 +411,7 @@ def build_source(
     include_open_tail: bool = True,
     freeze_startup_snapshot: bool = True,
     stamp_turns: bool = True,
+    poison_pattern: str | None = None,
 ) -> SelectionResult:
     """构造新 thread 的注入源。
 
@@ -419,7 +420,8 @@ def build_source(
     `carry_max_tokens` 只是防炸的硬上限，超了从最老的整轮开始丢，并如实计数。
     """
     turns = conversation_turns(rows, max_event_chars, stamp_turns=stamp_turns)
-    poison_score = len(POISON_RE.findall("\n".join(turn.text for turn in turns[-10:])))
+    poison_re = re.compile(poison_pattern, re.I) if poison_pattern else POISON_RE
+    poison_score = len(poison_re.findall("\n".join(turn.text for turn in turns[-10:])))
 
     snapshot = freeze_startup(rows) if freeze_startup_snapshot else None
     selected = [turn for turn in turns if turn.closed or (include_open_tail and turn.index == len(turns) - 1)]

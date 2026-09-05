@@ -46,6 +46,16 @@ class RebuildConfig:
     healthcheck_seconds: float = 5.0
     stable_file_seconds: float = 1.0
     stable_file_timeout_seconds: float = 10.0
+    # 激活方式：tmux（上游默认）或 systemd（cc 由 systemd 直接承载，无 tmux）。
+    activation: str = "tmux"
+    systemd_unit: str = "zhuo-cc.service"
+    # zhuo-claude 启动时优先读这个文件里的 session_id 来 --resume。
+    resume_pointer_path: str = "/etc/zhuo/resume_session"
+    # restart 要等 ExecStop（归档脚本）跑完，给足时间。
+    systemd_restart_timeout_seconds: float = 180.0
+    # 毒上下文探测正则（最近 10 轮命中 >=2 次即拒绝换窗）。默认与上游一致；
+    # 中文环境建议收窄，避免日常词「中毒」和讨论本工具时的自指误触。
+    poison_pattern: str = r"(AUP|Acceptable Use|policy violation|policy blocked|refusal loop|毒上下文|中毒|拒绝循环)"
 
     @classmethod
     def load(cls, path: str | Path | None = None) -> "RebuildConfig":
@@ -82,6 +92,11 @@ class RebuildConfig:
             healthcheck_seconds=float(raw.get("healthcheck_seconds", 5.0)),
             stable_file_seconds=float(raw.get("stable_file_seconds", 1.0)),
             stable_file_timeout_seconds=float(raw.get("stable_file_timeout_seconds", 10.0)),
+            activation=str(raw.get("activation", "tmux")).strip(),
+            systemd_unit=str(raw.get("systemd_unit", "zhuo-cc.service")).strip(),
+            resume_pointer_path=str(raw.get("resume_pointer_path", "/etc/zhuo/resume_session")).strip(),
+            systemd_restart_timeout_seconds=float(raw.get("systemd_restart_timeout_seconds", 180.0)),
+            poison_pattern=str(raw.get("poison_pattern", r"(AUP|Acceptable Use|policy violation|policy blocked|refusal loop|毒上下文|中毒|拒绝循环)")),
         )
         config.validate()
         return config
@@ -99,6 +114,16 @@ class RebuildConfig:
             raise ValueError("max_event_chars must not be negative")
         if 0 < self.max_event_chars < 500:
             raise ValueError("max_event_chars must be 0 (no truncation) or at least 500")
+        if self.activation not in ("tmux", "systemd"):
+            raise ValueError("activation must be 'tmux' or 'systemd'")
+        if self.activation == "systemd" and (not self.systemd_unit or not self.systemd_unit.endswith(".service")):
+            raise ValueError("systemd_unit must be a .service unit name")
+        try:
+            __import__("re").compile(self.poison_pattern, __import__("re").I)
+        except __import__("re").error as exc:
+            raise ValueError(f"poison_pattern is not a valid regex: {exc}")
+        if self.systemd_restart_timeout_seconds < 10:
+            raise ValueError("systemd_restart_timeout_seconds must be at least 10")
         if self.activation_delay_seconds < 1:
             raise ValueError("activation_delay_seconds must be at least 1")
 

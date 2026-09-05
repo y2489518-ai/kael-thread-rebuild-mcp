@@ -12,6 +12,7 @@ from .config import RebuildConfig
 from .dirty import evaluate as evaluate_dirty
 from .io import atomic_write_text, file_digest, sha256_text
 from .state import StateStore, utc_now
+from .systemd import make_controller
 from .tmux import TmuxController
 from .transcript import (
     build_source,
@@ -32,7 +33,7 @@ class RebuildCoordinator:
     def __init__(self, config: RebuildConfig, tmux: TmuxController | None = None) -> None:
         self.config = config
         self.state = StateStore(config.state_dir)
-        self.tmux = tmux or TmuxController(config)
+        self.tmux = tmux or make_controller(config)
 
     # ---------- helpers ----------
 
@@ -84,6 +85,7 @@ class RebuildCoordinator:
             include_open_tail=self.config.include_open_tail,
             freeze_startup_snapshot=self.config.freeze_startup_snapshot,
             stamp_turns=self.config.stamp_turns,
+            poison_pattern=self.config.poison_pattern,
         )
 
     def _pane_identity(self) -> str:
@@ -503,6 +505,17 @@ class RebuildCoordinator:
         ]
         if transcript:
             argv.extend(["--transcript", transcript])
+        # systemd 承载时 worker 必须逃出 service 的 cgroup，否则它自己发的
+        # `systemctl restart` 会连自己一起杀掉，operation 永远卡在 activating。
+        if self.config.activation == "systemd":
+            import shutil as _shutil
+
+            if _shutil.which("systemd-run"):
+                argv = [
+                    "systemd-run", "--scope", "--quiet", "--collect",
+                    "--unit", f"ktr-worker-{active['operation_id']}",
+                    "--property", "KillMode=process",
+                ] + argv
         try:
             with (self.config.state_dir / "worker.log").open("ab") as error_log:
                 subprocess.Popen(

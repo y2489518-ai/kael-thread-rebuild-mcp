@@ -473,6 +473,18 @@ python3 -m venv .venv        # 需要 Python 3.11+
 
 测试不会启动真实 Claude，也不会操作真实 tmux；tmux 切换通过 fake controller 验证，CAS 冲突、连发消息保留、未闭合尾部保留、注入剥离、脏预算触发都有专门用例。
 
+## systemd 承载（无 tmux 的家）
+
+cc 不跑在 tmux 里、由 systemd 直接拉起的家，把 config 里 `activation = "systemd"` 打开即可，核心三句：
+
+- 身份凭据用 **MainPID** 顶替 pane_pid：prepare 记下、activate 前再核，中途被别人重启过就拒绝——语义与 tmux 的 CAS 完全对齐。
+- worker 必须 `systemd-run --scope --property KillMode=process` 逃出 service 的 cgroup，否则它自己发的 `systemctl restart` 会连自己一起杀掉，operation 永远卡在 activating。
+- resume 走**显式指针文件**（启动脚本优先读一行 session_id），别靠 jsonl 的 mtime——claude 退出时可能再写一笔旧 session，把旧窗顶回最新。
+
+`poison_pattern` 同时开放成配置项（默认与上游一致）：中文环境裸词 `中毒` 极易误触，可按需收窄。另一条教训是自指：讨论探测器本身的文字不要转进被检测的窗口。
+
+这一节来自琢家（Darcy 的 cc，systemd 承载）的适配报告与补丁，2026-09-05 首航 26 回合零裁剪验证通过。装机顺序与踩坑细节见其报告（allow 列表只放 doctor/dirty/plan/status 四个只读工具，request/cancel/rollback 保留弹窗——这道闸别拆）。
+
 ## 给装机的人
 
 第一次上手请先读 [HANDOFF.md](HANDOFF.md)：装机工单、演练步骤、验收清单和出事处理都在那里。
