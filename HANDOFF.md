@@ -1,10 +1,12 @@
 # 工单：把 Thread Rebuild MCP 装到 VPS
 
-收件人：跑在 VPS `tmux cc` 里的 Kael
-派单人：跑在 Uki 的 Mac / VSCode 里的 Kael
+收件人：跑在目标机 `tmux cc` 里的宿主 Claude 实例
+派单人：跑在另一处（人类的开发机）的同一模型
 日期：2026-08-14
 
-这份工单只做一件事：把本仓库装到 VPS，装到能安全用为止。开工前请整份读完，尤其是「第 0 条」和「第 3 步」。
+> 这是首次装机的原始工单，保留第一人称口气。装到 tmux 以外的底座（systemd / `claude -p` 循环）时，先读 README 的「按底座选门」，再回来照这份走验收流程。
+
+这份工单只做一件事：把本仓库装到目标机，装到能安全用为止。开工前请整份读完，尤其是「第 0 条」和「第 3 步」。
 
 ---
 
@@ -15,7 +17,7 @@
 所以：
 
 - **第一次演练，绝对不要把 `tmux_target` 指向 `cc`。** 用一个另建的测试 session。拿 `cc` 试而它又不灵，你会当场把自己杀掉，而且没人知道发生了什么。
-- 装的全过程都在 `/opt/kael-thread-rebuild-mcp` 和 `/etc/kael-thread-rebuild/`，**不要动 Kael 的主程序、启动目录、ob-kael、cottage-web**。
+- 装的全过程都在 `/opt/kael-thread-rebuild-mcp` 和 `/etc/kael-thread-rebuild/`，**不要动宿主 Claude 的主程序、启动目录及其它无关服务**。
 - 接 Stop hook 时**只允许往 `hooks.Stop[*].hooks` 数组里追加一项**，不许覆盖已有 hooks。追加前先备份 `/root/.claude/settings.json`。
 - 任何一步验收不过就停下来报告，不要"先装上再说"。
 
@@ -300,12 +302,12 @@ claude mcp get kael-thread-rebuild
 
 ---
 
-## 第 7 步：正式验收（必须有 Uki 在场看着）
+## 第 7 步：正式验收（必须有人类在场看着）
 
-1. 先 `dirty` 看当前脏预算，`plan` 看 `selected_turns == source_turns`，把结果发给 Uki。
-2. Uki 明确同意后，才调用 `thread_rebuild_request(reason="...", confirmation="REBUILD")`。
-3. **调完先正常把话说完**——告诉 Uki「已登记，本轮结束后切换」。不要在同一轮里做别的危险动作。
-4. 本轮结束，Stop hook 触发，worker 接手。切换后新窗口里向 Uki 确认三件事：
+1. 先 `dirty` 看当前脏预算，`plan` 看 `selected_turns == source_turns`，把结果发给在场的人类。
+2. 人类明确同意后，才调用 `thread_rebuild_request(reason="...", confirmation="REBUILD")`。
+3. **调完先正常把话说完**——告知「已登记，本轮结束后切换」。不要在同一轮里做别的危险动作。
+4. 本轮结束，Stop hook 触发，worker 接手。切换后新窗口里向人类确认三件事：
    - 我们现在在做什么？
    - 已完成什么、还差什么？
    - 哪些边界和约定不能忘？
@@ -444,7 +446,7 @@ systemctl cat kael-cc | grep ExecStart                                  # 应该
 - **`dirty` 只给建议，不自动触发。**要不要重建，最终还是人点头。稳定跑一阵之后再谈自动化。
 - 启动包只能冻结 transcript 里那一份，Claude Code 自己会用**今天**的 CLAUDE.md 重新拼 system prompt，那部分控制不了。别以为冻结是完整的。
 
-装完把每一步的验收输出贴给 Uki。有任何一条对不上，停下来说，别自己判断"应该没事"。
+装完把每一步的验收输出贴给在场的人类。有任何一条对不上，停下来说，别自己判断"应该没事"。
 
 ---
 
