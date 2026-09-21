@@ -1,0 +1,33 @@
+# Replace paths and target with values verified on your host.
+project_dir = "/home/example/.claude/projects/-home-example-rebuild-drill"
+state_dir = "/home/example/.local/state/kael-thread-rebuild"
+claude_workdir = "/home/example/rebuild-drill"
+activation = "tmux"
+tmux_target = "rebuild-drill:0.0"
+
+# Preserve arguments required by your host and channels.
+# {session_id} must be a standalone argument.
+resume_command = ["claude", "--resume", "{session_id}"]
+
+# Recommendation threshold; does not register a rebuild.
+dirty_budget_bytes = 524288
+rebuild_on_original_image_view = true
+
+# 0 means unlimited estimated carryover. An optional budget is 60000.
+# drop_oldest retains the final turn even when that turn exceeds the budget.
+carry_max_tokens = 0
+carry_overflow = "drop_oldest"
+max_event_chars = 0
+include_open_tail = true
+freeze_startup_snapshot = true
+stamp_turns = true
+
+activation_delay_seconds = 3.0
+healthcheck_seconds = 5.0
+stable_file_seconds = 1.0
+stable_file_timeout_seconds = 10.0
+verify_workdir_matches_project = true
+
+# For systemd or pointer, configure relevant fields explicitly:
+# systemd_unit = "claude-session.service"
+# resume_pointer_path = "/etc/kael-thread-rebuild/resume_session"
